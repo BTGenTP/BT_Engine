@@ -160,6 +160,11 @@ def validate_bt_xml(
                     issues.append({"level": "error", "code": "attr_type", "message": f"Invalid {expected_type} for {tag}.{attr_name}: {attr_value}", "tag": tag})
                 for var in BB_VAR_RE.findall(attr_value or ""):
                     consumed_bb_vars.add(var)
+                # Nav2 blackboard production heuristics:
+                # - ComputePathToPose produces `{path}` (and similar) via its `path` output port.
+                if tag in {"ComputePathToPose", "ComputePathThroughPoses"} and attr_name == "path":
+                    for var in BB_VAR_RE.findall(attr_value or ""):
+                        produced_bb_vars.add(var)
 
         if tag in {"Sequence", "Fallback", "ReactiveSequence", "ReactiveFallback", "RoundRobin", "PipelineSequence", "KeepRunningUntilFailure", "Repeat", "Inverter", "RecoveryNode"} and len(list(el)) == 0:
             issues.append({"level": "error", "code": "empty_control_node", "message": f"Control node <{tag}> cannot be empty", "tag": tag})

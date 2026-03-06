@@ -93,6 +93,50 @@
                     <div id="warnings-list" class="hidden"></div>
                     <div id="errors-list" class="hidden"></div>
                 </div>
+
+                <div class="validation-panel" id="ros2-panel">
+                    <h3>ROS2_Container</h3>
+                    <div class="nav2-options">
+                        <label>
+                            Filename (BT)
+                            <input type="text" id="ros2-filename" value="mission.xml" placeholder="mission.xml">
+                        </label>
+                        <label>
+                            Initial pose (x,y,theta)
+                            <input type="text" id="ros2-initial-pose" value="0.0,0.0,0.0" placeholder="0.0,0.0,0.0">
+                        </label>
+                    </div>
+
+                    <div class="nav2-options">
+                        <label>
+                            Goal name (locations.yaml)
+                            <input type="text" id="ros2-goal-name" placeholder="Station_A">
+                        </label>
+                        <label>
+                            Goal pose (x,y,theta)
+                            <input type="text" id="ros2-goal-pose" placeholder="1.2,0.4,0.0">
+                        </label>
+                    </div>
+
+                    <div class="controls">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="ros2-start-stack" checked>
+                            Start sim stack if needed
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="ros2-restart-nav" checked>
+                            Restart navigation
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="ros2-allow-invalid">
+                            Allow invalid (basic check only)
+                        </label>
+                        <button onclick="transferToRos2()">Transferer XML</button>
+                        <button onclick="executeOnRos2()">Executer</button>
+                    </div>
+
+                    <pre class="hidden" id="ros2-output-pre"><code id="ros2-output"></code></pre>
+                </div>
             </div>
         </section>
     </main>

@@ -44,12 +44,41 @@ webapp/nav2/
 
 ## Déploiement du modèle + LoRA
 
-Le projet charge directement l’adapter LoRA avec `transformers + peft`.
-Par défaut, le backend fonctionne maintenant en mode hors-ligne:
-- aucun téléchargement Hugging Face n'est autorisé au premier appel
-- il faut fournir un modèle de base déjà présent localement, soit via un dossier explicite, soit via un cache HF prérempli
+Deux modes sont supportés :
+
+- **Recommandé (le moins coûteux en VRAM/temps)** : **inférence distante** via Hugging Face Inference API (serverless) sur un **modèle LoRA fusionné**, hébergé en **privé**.
+  - aucun téléchargement de poids local
+  - conserve le comportement LoRA
+  - nécessite un `NAV2_HF_TOKEN`
+- **Fallback** : chargement **local** `transformers + peft` (mode hors-ligne), si vous ne voulez/peuvez pas utiliser l’API distante.
 
 Il n'y a pas de conversion GGUF dans le flux par défaut. Une conversion GGUF ne doit etre envisagée qu'en plan B si le backend HF local reste trop lourd.
+
+### Option A — Inférence distante (HF Inference API, privé)
+
+Pré-requis : publier un **modèle fusionné** (base + LoRA) sur le Hub (repo privé), puis utiliser un token.
+
+Variables d’environnement :
+
+```bash
+export NAV2_PROVIDER=hf_inference_api
+export NAV2_MODEL_KEY=mistral7b
+export NAV2_REMOTE_MODEL_ID=<org>/<model-merged>
+export NAV2_HF_TOKEN=<hf_token>
+export NAV2_REMOTE_TIMEOUT_S=120
+export NAV2_REMOTE_MAX_RETRIES=2
+export ROS2_CONTROL_API_BASE=http://localhost:8001
+```
+
+Notes :
+- le mode remote est actuellement prévu pour `NAV2_MODEL_KEY=mistral7b` (prompt sans chat template).
+
+### Option B — Local HF + LoRA (hors-ligne)
+
+Le projet charge directement l’adapter LoRA avec `transformers + peft`.
+En local, le backend fonctionne en mode hors-ligne par défaut :
+- aucun téléchargement Hugging Face n'est autorisé au premier appel (sauf si `NAV2_ALLOW_DOWNLOADS=1`)
+- il faut fournir un modèle de base déjà présent localement, soit via un dossier explicite, soit via un cache HF prérempli
 
 ### Étape 1 — Précharger le modèle de base hors-ligne
 
