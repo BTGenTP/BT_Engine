@@ -8,6 +8,9 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +33,32 @@ templates = Jinja2Templates(directory=APP_DIR / "templates")
 nav2_generator = build_nav2_generator_from_env()
 nav2_catalog = load_nav2_catalog()
 ros_nav2_client = RosNav2Client()
+
+LOG_DIR = APP_DIR / "runs" / "_server_logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+_logger = logging.getLogger("nav2_webapp")
+if not _logger.handlers:
+    _logger.setLevel(logging.INFO)
+    fh = logging.FileHandler(LOG_DIR / "requests.log", encoding="utf-8")
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
+    fh.setFormatter(fmt)
+    _logger.addHandler(fh)
+
+
+@app.middleware("http")
+async def request_logging(request: Request, call_next):
+    req_id = uuid.uuid4().hex[:12]
+    t0 = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        dt_ms = int((time.perf_counter() - t0) * 1000)
+        _logger.exception("rid=%s %s %s -> EXC %dms err=%s", req_id, request.method, request.url.path, dt_ms, str(exc))
+        raise
+    dt_ms = int((time.perf_counter() - t0) * 1000)
+    _logger.info("rid=%s %s %s -> %s %dms", req_id, request.method, request.url.path, getattr(response, "status_code", "?"), dt_ms)
+    response.headers["X-Request-Id"] = req_id
+    return response
 
 
 class GenerateRequest(BaseModel):

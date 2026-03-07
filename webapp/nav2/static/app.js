@@ -235,11 +235,15 @@ async function executeOnRos2() {
     const xml = currentXmlForRos2();
     const form = getRos2Form();
     if (form.goal_name && form.goal_pose) {
-        alert("Fournir soit goal_name soit goal_pose, pas les deux.");
+        const msg = "Fournir soit goal_name soit goal_pose, pas les deux.";
+        showRos2Output({ error: msg });
+        alert(msg);
         return;
     }
     if (!xml && !form.filename) {
-        alert("Fournir un XML ou un filename.");
+        const msg = "Fournir un XML ou un filename.";
+        showRos2Output({ error: msg });
+        alert(msg);
         return;
     }
     const res = await fetch("/api/execute", {
