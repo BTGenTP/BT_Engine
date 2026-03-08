@@ -50,6 +50,14 @@ button { background: var(--primary); color: #fff; border: none; border-radius: 0
 button:hover:not(:disabled) { background: var(--primary-hover); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.mode-selector { margin-bottom: 1rem; }
+.mode-option { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.75rem; padding: 0.5rem 0; cursor: pointer; font-size: 0.9rem; }
+.mode-option:has(input:disabled) { opacity: 0.5; cursor: not-allowed; color: var(--text-muted); }
+.mode-option input[type="radio"] { margin-right: 0.35rem; }
+.mode-label { font-weight: 500; }
+.mode-reason { font-size: 0.75rem; color: var(--text-muted); width: 100%; margin-left: 1.5rem; }
+.mode-option.unavailable .mode-label { color: var(--text-muted); }
+
 .nav2-options { margin-top: 0.75rem; display: flex; gap: 0.75rem; }
 .nav2-options label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.8rem; color: var(--text-muted); width: 100%; }
 

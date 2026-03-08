@@ -21,7 +21,12 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from bt_validation import validate_bt_xml
-from inference import TEST_MISSIONS_NAV2_XML, build_nav2_xml_generator_from_env
+from inference import (
+    TEST_MISSIONS_NAV2_XML,
+    build_nav2_xml_generator_from_env,
+    get_generator_for_mode,
+    get_modes_availability,
+)
 from nav2_pipeline import load_nav2_catalog
 from ros_nav2_client import RosNav2Client
 
@@ -31,7 +36,20 @@ app.mount("/static", StaticFiles(directory=APP_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=APP_DIR / "templates")
 
 nav2_generator = build_nav2_xml_generator_from_env()
-nav2_catalog = load_nav2_catalog()
+_generator_cache: dict[str, object] = {}  # mode_id -> generator
+
+
+def _get_generator_for_request(mode: Optional[str] = None):
+    """Resolve generator for this request: use mode if provided and available, else default."""
+    mode_id = (mode or "").strip().lower()
+    if mode_id in ("lora", "gguf", "remote"):
+        if mode_id not in _generator_cache:
+            g = get_generator_for_mode(mode_id)
+            if g is not None:
+                _generator_cache[mode_id] = g
+        if mode_id in _generator_cache:
+            return _generator_cache[mode_id]
+    return nav2_generator
 ros_nav2_client = RosNav2Client()
 
 LOG_DIR = APP_DIR / "runs" / "_server_logs"
@@ -63,6 +81,7 @@ async def request_logging(request: Request, call_next):
 
 class GenerateRequest(BaseModel):
     mission: str
+    mode: Optional[str] = None  # "lora" | "gguf" | "remote"; if set and available, use that generator
     constrained: str = "regex"
     max_new_tokens: int = 1024
     temperature: float = 0.0
@@ -95,6 +114,7 @@ async def index(request: Request):
 async def status():
     payload = nav2_generator.status()
     payload["ros2_control_api_base"] = ros_nav2_client.api_base
+    payload["modes"] = get_modes_availability()
     return payload
 
 
@@ -105,9 +125,10 @@ async def examples():
 
 @app.post("/api/generate")
 async def generate(req: GenerateRequest):
+    generator = _get_generator_for_request(req.mode)
     try:
         return await asyncio.to_thread(
-            nav2_generator.generate,
+            generator.generate,
             req.mission,
             constrained=req.constrained,
             max_new_tokens=req.max_new_tokens,

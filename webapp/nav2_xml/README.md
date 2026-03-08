@@ -2,18 +2,51 @@
 
 Projet autonome pour l’inférence **mission -> BT XML direct -> validation stricte** avec un modèle orienté Nav2 (LoRA local, GGUF local, ou API HF).
 
-## Modes de génération
+## Choix du mode dans l’interface
 
-Un seul mode est actif à la fois, choisi par variables d’environnement (priorité : GGUF > Remote > LoRA).
+L’utilisateur choisit le **mode de génération** dans la webapp (sélecteur en haut du panneau Mission). Les trois options sont :
 
-| Mode | Classe | Variables d’environnement | Prérequis |
-|------|--------|---------------------------|-----------|
-| **Local LoRA** | `Nav2XmlGenerator` | `NAV2_ADAPTER_DIR`, `NAV2_BASE_MODEL_DIR` (optionnel), `NAV2_MODEL_KEY`, `NAV2_LOAD_IN_4BIT`, `NAV2_ALLOW_DOWNLOADS` | Adapter LoRA + base (HF ou répertoire local), torch, transformers, peft, bitsandbytes |
-| **Local GGUF** | `Nav2XmlGeneratorGGUF` | `NAV2_XML_GGUF_PATH` (chemin vers le fichier `.gguf`), `NAV2_MODEL_KEY` | Fichier GGUF (ex. produit par le job SLURM ci‑dessous), `llama-cpp-python` |
-| **Remote (HF)** | `Nav2XmlRemoteGenerator` | `NAV2_XML_REMOTE_MODEL_ID`, `HF_TOKEN` ou `NAV2_XML_HF_TOKEN`, optionnel : `NAV2_XML_REMOTE_TIMEOUT_S`, `NAV2_XML_REMOTE_MAX_RETRIES` | Modèle mergé sur Hugging Face, `huggingface_hub` |
+- **Local (base+adapter)** — LoRA local (HF + adapter)
+- **Local (GGUF)** — Modèle GGUF chargé en local
+- **Remote (Hugging Face)** — Inférence via l’API Hugging Face
 
-- **Priorité** : si `NAV2_XML_GGUF_PATH` pointe vers un fichier existant → mode GGUF ; sinon si `NAV2_XML_REMOTE_MODEL_ID` et token sont renseignés → mode Remote ; sinon → mode Local LoRA.
-- L’endpoint `/api/status` renvoie le `provider` actif : `hf_local_peft`, `gguf_local` ou `hf_inference_api`.
+Les options **non disponibles** (prérequis ou variables d’environnement manquants, ou dépendances non installées) sont **grisées** et une courte raison s’affiche. Seuls les modes disponibles sont sélectionnables.
+
+## Dépendances (uv)
+
+Le projet utilise **uv** pour la gestion des dépendances. Les dépendances sont réparties par mode via des **extras** :
+
+| Extra | Mode | Dépendances |
+|-------|------|-------------|
+| *(aucun)* | Base | `fastapi`, `uvicorn`, `jinja2`, `huggingface_hub` |
+| `lora` | Local (base+adapter) | `torch`, `transformers`, `peft`, `bitsandbytes`, `lm-format-enforcer` |
+| `gguf` | Local (GGUF) | `llama-cpp-python` |
+| `remote` | Remote (HF) | *(utilise `huggingface_hub` du core)* |
+
+**Installation :**
+
+```bash
+pip install uv
+cd repositories/BT_Engine/webapp/nav2_xml
+uv sync --extra lora --extra gguf --extra remote   # tous les modes
+# ou pour un seul mode :
+uv sync --extra lora
+uv sync --extra gguf
+uv sync --extra remote   # optionnel, rien de plus que le core
+```
+
+Lancer avec uv : `uv run uvicorn app:app --host 0.0.0.0 --port 8000`
+
+## Modes de génération (config)
+
+| Mode | Variables d’environnement | Prérequis |
+|------|---------------------------|-----------|
+| **Local LoRA** | `NAV2_ADAPTER_DIR`, `NAV2_BASE_MODEL_DIR` (opt.), `NAV2_MODEL_KEY`, `NAV2_LOAD_IN_4BIT`, `NAV2_ALLOW_DOWNLOADS` | Adapter LoRA + base ; installer avec `uv sync --extra lora` |
+| **Local GGUF** | `NAV2_XML_GGUF_PATH` (fichier `.gguf`), `NAV2_MODEL_KEY` | Fichier GGUF ; installer avec `uv sync --extra gguf` |
+| **Remote (HF)** | `NAV2_XML_REMOTE_MODEL_ID`, `HF_TOKEN` ou `NAV2_XML_HF_TOKEN`, optionnel : `NAV2_XML_REMOTE_TIMEOUT_S`, `NAV2_XML_REMOTE_MAX_RETRIES` | Modèle mergé sur HF ; core suffit |
+
+- L’endpoint `/api/status` renvoie la liste `modes` (disponibilité et raison si indisponible) et le `provider` du générateur par défaut.
+- `POST /api/generate` accepte un champ optionnel `mode` (`"lora"` | `"gguf"` | `"remote"`) pour forcer le mode pour cette requête.
 
 ## Conversion merged → GGUF (job SLURM)
 
@@ -27,6 +60,7 @@ Pour obtenir un fichier GGUF à utiliser avec le mode Local GGUF :
 
 ```text
 webapp/nav2_xml/
+├── pyproject.toml      # uv, optional-dependencies par mode (lora, gguf, remote)
 ├── app.py
 ├── inference.py
 ├── nav2_pipeline.py
@@ -58,17 +92,16 @@ webapp/nav2_xml/
 
 ## Lancer la webapp
 
+**Avec uv (recommandé) :**
+
 ```bash
 cd repositories/BT_Engine/webapp/nav2_xml
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m uvicorn app:app --host 0.0.0.0 --port 8000
+uv sync --extra lora --extra gguf   # selon les modes souhaités
+uv run uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-Pour le mode GGUF, placer le fichier `.gguf` et définir par exemple :  
-`export NAV2_XML_GGUF_PATH=/chemin/vers/nav2_xml_mistral7b_q4_k_m.gguf`
+**Avec pip (fallback) :**  
+`pip install -r requirements.txt` installe toutes les dépendances (tous modes). Puis `python -m uvicorn app:app --host 0.0.0.0 --port 8000`.
 
-Pour le mode Remote, définir :  
-`export NAV2_XML_REMOTE_MODEL_ID=org/repo-merged` et `export HF_TOKEN=...`
+Dans l’interface, choisir le mode de génération (les options non disponibles sont grisées). Pour qu’un mode soit disponible : configurer les variables d’environnement correspondantes et installer l’extra uv associé si besoin.
 

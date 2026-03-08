@@ -4,7 +4,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from model_registry import MODELS
 from nav2_pipeline import build_xml_payload, load_nav2_catalog, write_nav2_xml_run_artifacts
@@ -507,39 +507,131 @@ class Nav2XmlRemoteGenerator:
         return result
 
 
-def build_nav2_xml_generator_from_env():
-    """Build the active generator from env: GGUF > Remote > Local LoRA."""
-    gguf_path = os.getenv("NAV2_XML_GGUF_PATH", "").strip()
-    if gguf_path and Path(gguf_path).expanduser().is_file():
-        return Nav2XmlGeneratorGGUF(
-            gguf_path=gguf_path,
-            model_key=os.getenv("NAV2_MODEL_KEY", "mistral7b"),
-        )
-    remote_id = os.getenv("NAV2_XML_REMOTE_MODEL_ID", "").strip()
-    token = (
-        os.getenv("NAV2_XML_HF_TOKEN", "").strip()
-        or os.getenv("HF_TOKEN", "").strip()
-    )
-    if remote_id and token:
-        return Nav2XmlRemoteGenerator(
-            model_id=remote_id,
-            token=token,
-            model_key=os.getenv("NAV2_MODEL_KEY", "mistral7b"),
-            timeout_s=float(os.getenv("NAV2_XML_REMOTE_TIMEOUT_S", "120")),
-            max_retries=int(os.getenv("NAV2_XML_REMOTE_MAX_RETRIES", "2")),
-        )
+def _lora_deps_available() -> Tuple[bool, str]:
+    try:
+        import peft  # noqa: F401
+        import torch  # noqa: F401
+        import transformers  # noqa: F401
+        return True, ""
+    except ImportError as e:
+        return False, f"Dépendances non installées. Exécuter: uv sync --extra lora ({e})"
+
+
+def _gguf_deps_available() -> Tuple[bool, str]:
+    try:
+        from llama_cpp import Llama  # noqa: F401
+        return True, ""
+    except ImportError as e:
+        return False, f"Dépendances non installées. Exécuter: uv sync --extra gguf ({e})"
+
+
+def _remote_deps_available() -> Tuple[bool, str]:
+    try:
+        from huggingface_hub import InferenceClient  # noqa: F401
+        return True, ""
+    except ImportError as e:
+        return False, f"Dépendances non installées. Exécuter: uv sync --extra remote ({e})"
+
+
+def get_modes_availability() -> List[Dict[str, Any]]:
+    """Return availability of each generation mode for the UI (options grisées si non disponible)."""
     model_key = os.getenv("NAV2_MODEL_KEY", "mistral7b")
-    adapter_dir = os.getenv("NAV2_ADAPTER_DIR", None)
-    base_model_dir = os.getenv("NAV2_BASE_MODEL_DIR", None)
-    hf_cache_dir = os.getenv("NAV2_HF_CACHE_DIR", None)
-    load_in_4bit = os.getenv("NAV2_LOAD_IN_4BIT", "1").strip() not in {"0", "false", "False"}
-    allow_downloads = os.getenv("NAV2_ALLOW_DOWNLOADS", "0").strip() in {"1", "true", "True"}
+    modes = []
+
+    # LoRA: adapter dir exists and deps available
+    adapter_dir = Path(os.getenv("NAV2_ADAPTER_DIR", "") or str(DEFAULT_ADAPTER_DIR)).expanduser().resolve()
+    adapter_ok = any((adapter_dir / n).exists() for n in ("adapter_model.safetensors", "adapter_model.bin")) and (adapter_dir / "adapter_config.json").exists()
+    lora_deps_ok, lora_deps_msg = _lora_deps_available()
+    modes.append({
+        "id": "lora",
+        "label": "Local (base+adapter)",
+        "available": bool(adapter_ok and lora_deps_ok),
+        "reason": "" if (adapter_ok and lora_deps_ok) else (lora_deps_msg if adapter_ok else "Adapter LoRA absent (NAV2_ADAPTER_DIR ou models/lora_adapter)"),
+    })
+
+    # GGUF: path set, file exists, deps available
+    gguf_path = os.getenv("NAV2_XML_GGUF_PATH", "").strip()
+    gguf_file_ok = bool(gguf_path and Path(gguf_path).expanduser().is_file())
+    gguf_deps_ok, gguf_deps_msg = _gguf_deps_available()
+    modes.append({
+        "id": "gguf",
+        "label": "Local (GGUF)",
+        "available": bool(gguf_file_ok and gguf_deps_ok),
+        "reason": "" if (gguf_file_ok and gguf_deps_ok) else (gguf_deps_msg if gguf_file_ok else "NAV2_XML_GGUF_PATH non défini ou fichier absent"),
+    })
+
+    # Remote: model_id + token, deps available
+    remote_id = os.getenv("NAV2_XML_REMOTE_MODEL_ID", "").strip()
+    token = os.getenv("NAV2_XML_HF_TOKEN", "").strip() or os.getenv("HF_TOKEN", "").strip()
+    remote_cfg_ok = bool(remote_id and token)
+    remote_deps_ok, remote_deps_msg = _remote_deps_available()
+    modes.append({
+        "id": "remote",
+        "label": "Remote (Hugging Face)",
+        "available": bool(remote_cfg_ok and remote_deps_ok),
+        "reason": "" if (remote_cfg_ok and remote_deps_ok) else (remote_deps_msg if remote_cfg_ok else "NAV2_XML_REMOTE_MODEL_ID et HF_TOKEN non définis"),
+    })
+
+    return modes
+
+
+def get_generator_for_mode(mode: str):
+    """Return generator for the given mode (lora, gguf, remote). Returns None if mode unavailable."""
+    mode = (mode or "").strip().lower()
+    model_key = os.getenv("NAV2_MODEL_KEY", "mistral7b")
+
+    if mode == "gguf":
+        gguf_path = os.getenv("NAV2_XML_GGUF_PATH", "").strip()
+        if gguf_path and Path(gguf_path).expanduser().is_file():
+            return Nav2XmlGeneratorGGUF(gguf_path=gguf_path, model_key=model_key)
+        return None
+
+    if mode == "remote":
+        remote_id = os.getenv("NAV2_XML_REMOTE_MODEL_ID", "").strip()
+        token = os.getenv("NAV2_XML_HF_TOKEN", "").strip() or os.getenv("HF_TOKEN", "").strip()
+        if remote_id and token:
+            return Nav2XmlRemoteGenerator(
+                model_id=remote_id,
+                token=token,
+                model_key=model_key,
+                timeout_s=float(os.getenv("NAV2_XML_REMOTE_TIMEOUT_S", "120")),
+                max_retries=int(os.getenv("NAV2_XML_REMOTE_MAX_RETRIES", "2")),
+            )
+        return None
+
+    if mode == "lora" or not mode:
+        adapter_dir = os.getenv("NAV2_ADAPTER_DIR", None)
+        base_model_dir = os.getenv("NAV2_BASE_MODEL_DIR", None)
+        hf_cache_dir = os.getenv("NAV2_HF_CACHE_DIR", None)
+        load_in_4bit = os.getenv("NAV2_LOAD_IN_4BIT", "1").strip() not in {"0", "false", "False"}
+        allow_downloads = os.getenv("NAV2_ALLOW_DOWNLOADS", "0").strip() in {"1", "true", "True"}
+        gen = Nav2XmlGenerator(
+            model_key=model_key,
+            adapter_dir=adapter_dir,
+            base_model_dir=base_model_dir,
+            hf_cache_dir=hf_cache_dir,
+            load_in_4bit=load_in_4bit,
+            allow_downloads=allow_downloads,
+        )
+        if gen.configured:
+            return gen
+        return None
+
+    return None
+
+
+def build_nav2_xml_generator_from_env():
+    """Build the active generator from env: GGUF > Remote > Local LoRA (default)."""
+    for mode_id in ("gguf", "remote", "lora"):
+        g = get_generator_for_mode(mode_id)
+        if g is not None:
+            return g
     return Nav2XmlGenerator(
-        model_key=model_key,
-        adapter_dir=adapter_dir,
-        base_model_dir=base_model_dir,
-        hf_cache_dir=hf_cache_dir,
-        load_in_4bit=load_in_4bit,
-        allow_downloads=allow_downloads,
+        model_key=os.getenv("NAV2_MODEL_KEY", "mistral7b"),
+        adapter_dir=os.getenv("NAV2_ADAPTER_DIR", None),
+        base_model_dir=os.getenv("NAV2_BASE_MODEL_DIR", None),
+        hf_cache_dir=os.getenv("NAV2_HF_CACHE_DIR", None),
+        load_in_4bit=os.getenv("NAV2_LOAD_IN_4BIT", "1").strip() not in {"0", "false", "False"},
+        allow_downloads=os.getenv("NAV2_ALLOW_DOWNLOADS", "0").strip() in {"1", "true", "True"},
     )
 

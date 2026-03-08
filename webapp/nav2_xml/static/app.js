@@ -14,9 +14,34 @@ async function checkStatus() {
     try {
         const res = await fetch("/api/status");
         const data = await res.json();
+
+        // Mode selector: enable/disable from data.modes
+        const modes = data.modes || [];
+        let firstAvailableId = null;
+        modes.forEach((m) => {
+            const radio = document.getElementById("mode-" + m.id);
+            const reasonEl = document.getElementById("mode-reason-" + m.id);
+            const label = radio ? radio.closest(".mode-option") : null;
+            if (radio) {
+                radio.disabled = !m.available;
+                if (m.available && !firstAvailableId) firstAvailableId = m.id;
+            }
+            if (reasonEl) {
+                reasonEl.textContent = m.reason || "";
+                reasonEl.title = m.reason || "";
+            }
+            if (label) {
+                if (m.available) label.classList.remove("unavailable"); else label.classList.add("unavailable");
+            }
+        });
+        if (firstAvailableId) {
+            const firstRadio = document.getElementById("mode-" + firstAvailableId);
+            if (firstRadio && !firstRadio.checked) firstRadio.checked = true;
+        }
+
         if (data.loaded) {
             const provider = data.provider ? `${data.provider}` : "backend";
-            badge.textContent = `Modele Nav2 pret (${data.model_key}, ${provider})`;
+            badge.textContent = `Modele Nav2 pret (${data.model_key || "—"}, ${provider})`;
             badge.className = "status-badge ready";
             btn.disabled = false;
         } else if (data.configured) {
@@ -24,9 +49,10 @@ async function checkStatus() {
             badge.className = "status-badge loading";
             btn.disabled = false;
         } else {
-            badge.textContent = "Adapter Nav2 absent";
-            badge.className = "status-badge error";
-            btn.disabled = true;
+            const hasAnyMode = modes.some((m) => m.available);
+            badge.textContent = hasAnyMode ? "Au moins un mode disponible" : "Aucun mode disponible (config ou deps)";
+            badge.className = hasAnyMode ? "status-badge loading" : "status-badge error";
+            btn.disabled = !hasAnyMode;
         }
     } catch {
         badge.textContent = "Serveur injoignable";
@@ -99,11 +125,15 @@ async function generate() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), MAX_TIME_S * 1000);
     try {
+        const selectedMode = document.querySelector('input[name="gen-mode"]:checked');
+        const mode = selectedMode && !selectedMode.disabled ? selectedMode.value : null;
+
         const res = await fetch("/api/generate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 mission,
+                mode: mode || undefined,
                 constrained: document.getElementById("use-constraint").checked ? "regex" : "off",
                 max_new_tokens: parseInt(document.getElementById("max-new-tokens").value, 10) || 1024,
                 temperature: parseFloat(document.getElementById("temperature").value || "0"),
