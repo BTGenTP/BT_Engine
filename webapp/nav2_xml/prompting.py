@@ -1,21 +1,67 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Tuple
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
-from catalog_io import allowed_skills, required_param_names
+from catalog_io import allowed_skills, data_root, required_param_names
 
 
-def render_catalog_compact(catalog: Mapping[str, Any]) -> str:
+def _default_reference_bt_path() -> Path:
+    return data_root() / "reference_behavior_trees" / "navigate_then_spin.xml"
+
+
+def render_catalog_compact(
+    catalog: Mapping[str, Any],
+    reference_bt_path: Optional[Path] = None,
+) -> str:
+    """Render full catalog for the prompt: skills (bt_tag, node_type, ports, description, examples), control nodes, reference BT."""
     allowed = allowed_skills(catalog)
     required = required_param_names(catalog)
     lines: List[str] = []
+
     lines.append("Skills autorisés (Nav2 proxy) :")
     for sid in sorted(allowed.keys()):
+        skill = allowed[sid]
+        bt_tag = skill.get("bt_tag", sid)
+        node_type = skill.get("node_type", "Action")
         req = sorted(required.get(sid, set()))
-        ports = allowed[sid].get("input_ports") or {}
-        ports_list = ", ".join([str(k) for k in ports.keys() if isinstance(k, str)]) if isinstance(ports, dict) else ""
+        input_ports = skill.get("input_ports") or {}
+        output_ports = skill.get("output_ports") or {}
+        ports_list = ", ".join(str(k) for k in input_ports.keys() if isinstance(k, str))
         req_list = ", ".join(req) if req else "(aucun port requis)"
-        lines.append(f"- {sid}: ports=[{ports_list}] requis=[{req_list}]")
+        out_list = ", ".join(str(k) for k in output_ports.keys() if isinstance(k, str)) if output_ports else ""
+        desc = (skill.get("semantic_description") or "").strip()
+        examples = skill.get("examples") or []
+        lines.append(f"- id={sid} | bt_tag={bt_tag!r} | node_type={node_type}")
+        lines.append(f"  input_ports=[{ports_list}] requis=[{req_list}]")
+        if out_list:
+            lines.append(f"  output_ports=[{out_list}]")
+        if desc:
+            lines.append(f"  description: {desc}")
+        if examples:
+            examples_str = "; ".join(json.dumps(ex, ensure_ascii=False) for ex in examples[:3])
+            if len(examples) > 3:
+                examples_str += " ..."
+            lines.append(f"  exemples: {examples_str}")
+    lines.append("")
+
+    control = catalog.get("control_nodes_allowed") or []
+    if control:
+        lines.append("Noeuds de contrôle autorisés :")
+        for c in control:
+            if isinstance(c, dict):
+                tag = c.get("bt_tag", "?")
+                attrs = c.get("attributes") or []
+                lines.append(f"- {tag}" + (f" attributs=[{', '.join(attrs)}]" if attrs else ""))
+        lines.append("")
+
+    ref_path = reference_bt_path or _default_reference_bt_path()
+    if ref_path and ref_path.is_file():
+        lines.append("Behavior Tree de référence (structure et tags à respecter) :")
+        lines.append(ref_path.read_text(encoding="utf-8").strip())
+        lines.append("")
+
     return "\n".join(lines)
 
 

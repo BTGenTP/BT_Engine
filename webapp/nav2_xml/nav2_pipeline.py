@@ -85,6 +85,7 @@ def write_nav2_xml_run_artifacts(
     strict_blackboard: bool,
     latency_ms: int,
     xml_payload: Dict[str, Any],
+    tokens: Optional[Dict[str, int]] = None,
 ) -> str:
     run_id = next_run_id()
     rp = create_run_dir(run_id)
@@ -105,6 +106,7 @@ def write_nav2_xml_run_artifacts(
     write_json(rp.validation_report_json, xml_payload["validation_report"])
 
     summary = xml_payload["validation_report"].get("summary") or {}
+    tok = tokens or {}
     metrics: Dict[str, Any] = {
         "schema_version": "0.1",
         "run_id": run_id,
@@ -115,7 +117,11 @@ def write_nav2_xml_run_artifacts(
             "model": model_name,
             "temperature": float(temperature),
             "latency_ms": int(latency_ms),
-            "tokens": {"prompt_tokens": None, "completion_tokens": None, "total_tokens": None},
+            "tokens": {
+                "prompt_tokens": tok.get("prompt_tokens"),
+                "completion_tokens": tok.get("completion_tokens"),
+                "total_tokens": tok.get("total_tokens"),
+            },
             "errors": {},
         },
         "bt": {

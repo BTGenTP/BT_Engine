@@ -552,7 +552,8 @@ class Nav2XmlOpenAICompatibleGenerator:
 
     def _chat_completion(
         self, *, prompt: str, max_new_tokens: int, temperature: float
-    ) -> str:
+    ) -> Tuple[str, Optional[Dict[str, int]]]:
+        """Returns (response_text, usage_dict). usage_dict has prompt_tokens, completion_tokens, total_tokens when available."""
         try:
             from openai import OpenAI
         except Exception as exc:
@@ -575,7 +576,15 @@ class Nav2XmlOpenAICompatibleGenerator:
             kwargs["temperature"] = float(temperature)
         resp = client.chat.completions.create(**kwargs)
         text = (resp.choices[0].message.content if resp.choices else "") or ""
-        return str(text).strip()
+        usage: Optional[Dict[str, int]] = None
+        if getattr(resp, "usage", None) is not None:
+            u = resp.usage
+            usage = {
+                "prompt_tokens": getattr(u, "prompt_tokens", None) or 0,
+                "completion_tokens": getattr(u, "completion_tokens", None) or 0,
+                "total_tokens": getattr(u, "total_tokens", None) or 0,
+            }
+        return str(text).strip(), usage
 
     def generate(
         self,
@@ -597,7 +606,7 @@ class Nav2XmlOpenAICompatibleGenerator:
             self.catalog, mission, model_key=self.model_key
         )
         t0 = time.perf_counter()
-        llm_raw = self._chat_completion(
+        llm_raw, usage = self._chat_completion(
             prompt=prompt,
             max_new_tokens=int(max_new_tokens),
             temperature=float(temperature),
@@ -625,6 +634,8 @@ class Nav2XmlOpenAICompatibleGenerator:
             "generation_time_s": float(latency_ms) / 1000.0,
             "run_dir": None,
         }
+        if usage:
+            result["tokens"] = usage
         if write_run:
             run_dir = write_nav2_xml_run_artifacts(
                 mission=mission,
@@ -638,6 +649,7 @@ class Nav2XmlOpenAICompatibleGenerator:
                 strict_blackboard=bool(strict_blackboard),
                 latency_ms=int(latency_ms),
                 xml_payload=payload,
+                tokens=usage,
             )
             result["run_dir"] = run_dir
         return result
