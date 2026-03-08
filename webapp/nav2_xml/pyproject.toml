@@ -26,6 +26,10 @@ gguf = [
 ]
 # Mode Remote (Hugging Face API): dépendances dans main (huggingface_hub)
 remote = []
+# Mode Remote (OpenAI-compatible, e.g. Mistral)
+openai = [
+    "openai>=1.0",
+]
 
 [tool.uv]
 dev-dependencies = []

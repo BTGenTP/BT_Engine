@@ -32,6 +32,27 @@
                     <span class="mode-label">Remote (Hugging Face)</span>
                     <span class="mode-reason" id="mode-reason-remote"></span>
                 </label>
+                <label class="mode-option">
+                    <input type="radio" name="gen-mode" value="openai" id="mode-openai">
+                    <span class="mode-label">Remote (OpenAI-compatible)</span>
+                    <span class="mode-reason" id="mode-reason-openai"></span>
+                </label>
+            </div>
+
+            <div id="openai-options" class="openai-options hidden">
+                <h3>OpenAI-compatible (Mistral / OpenAI)</h3>
+                <label>
+                    Modèle
+                    <input type="text" id="openai-model" placeholder="mistral-large-latest">
+                </label>
+                <label>
+                    URL de base
+                    <input type="text" id="openai-base-url" placeholder="https://api.mistral.ai/v1">
+                </label>
+                <label>
+                    Clé API
+                    <input type="password" id="openai-api-key" placeholder="Optionnel si définie en env">
+                </label>
             </div>
 
             <h2>Mission</h2>

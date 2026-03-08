@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 from pathlib import Path
@@ -22,7 +23,10 @@ from pydantic import BaseModel
 
 from bt_validation import validate_bt_xml
 from inference import (
+    DEFAULT_OPENAI_BASE_URL,
+    DEFAULT_OPENAI_MODEL,
     TEST_MISSIONS_NAV2_XML,
+    Nav2XmlOpenAICompatibleGenerator,
     build_nav2_xml_generator_from_env,
     get_generator_for_mode,
     get_modes_availability,
@@ -42,7 +46,7 @@ _generator_cache: dict[str, object] = {}  # mode_id -> generator
 def _get_generator_for_request(mode: Optional[str] = None):
     """Resolve generator for this request: use mode if provided and available, else default."""
     mode_id = (mode or "").strip().lower()
-    if mode_id in ("lora", "gguf", "remote"):
+    if mode_id in ("lora", "gguf", "remote", "openai"):
         if mode_id not in _generator_cache:
             g = get_generator_for_mode(mode_id)
             if g is not None:
@@ -81,13 +85,17 @@ async def request_logging(request: Request, call_next):
 
 class GenerateRequest(BaseModel):
     mission: str
-    mode: Optional[str] = None  # "lora" | "gguf" | "remote"; if set and available, use that generator
+    mode: Optional[str] = None  # "lora" | "gguf" | "remote" | "openai"
     constrained: str = "regex"
     max_new_tokens: int = 1024
     temperature: float = 0.0
     write_run: bool = True
     strict_attrs: bool = True
     strict_blackboard: bool = True
+    # OpenAI-compatible mode overrides (optional; fallback to env)
+    openai_model: Optional[str] = None
+    openai_base_url: Optional[str] = None
+    openai_api_key: Optional[str] = None
 
 
 class ValidateRequest(BaseModel):
@@ -125,7 +133,26 @@ async def examples():
 
 @app.post("/api/generate")
 async def generate(req: GenerateRequest):
-    generator = _get_generator_for_request(req.mode)
+    mode_id = (req.mode or "").strip().lower()
+    if mode_id == "openai":
+        api_key = (req.openai_api_key or "").strip() or os.getenv("NAV2_XML_OPENAI_API_KEY", "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
+        model = (req.openai_model or "").strip() or os.getenv("NAV2_XML_OPENAI_MODEL", "").strip() or DEFAULT_OPENAI_MODEL
+        base_url = (req.openai_base_url or "").strip() or os.getenv("NAV2_XML_OPENAI_BASE_URL", "").strip() or DEFAULT_OPENAI_BASE_URL
+        if not api_key:
+            return JSONResponse(
+                status_code=422,
+                content={"error": "OpenAI-compatible mode requires an API key. Set NAV2_XML_OPENAI_API_KEY or OPENAI_API_KEY, or provide openai_api_key in the request."},
+            )
+        generator = Nav2XmlOpenAICompatibleGenerator(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            model_key=os.getenv("NAV2_MODEL_KEY", "mistral7b"),
+            timeout_s=float(os.getenv("NAV2_XML_OPENAI_TIMEOUT_S", "120")),
+            max_retries=int(os.getenv("NAV2_XML_OPENAI_MAX_RETRIES", "2")),
+        )
+    else:
+        generator = _get_generator_for_request(req.mode)
     try:
         return await asyncio.to_thread(
             generator.generate,

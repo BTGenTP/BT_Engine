@@ -59,6 +59,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .mode-option.unavailable .mode-label { color: var(--text-muted); }
 
 .nav2-options { margin-top: 0.75rem; display: flex; gap: 0.75rem; }
+.openai-options { margin-top: 0.75rem; }
+.openai-options label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; }
 .nav2-options label { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.8rem; color: var(--text-muted); width: 100%; }
 
 .examples { margin-top: 1.5rem; }

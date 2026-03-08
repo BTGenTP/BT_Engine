@@ -4,9 +4,25 @@ let progressInterval = null;
 let progressStart = 0;
 let lastXml = "";
 
+function toggleOpenAIOptions() {
+    const openaiOptions = document.getElementById("openai-options");
+    const openaiRadio = document.getElementById("mode-openai");
+    if (openaiOptions && openaiRadio) {
+        if (openaiRadio.checked && !openaiRadio.disabled) {
+            openaiOptions.classList.remove("hidden");
+        } else {
+            openaiOptions.classList.add("hidden");
+        }
+    }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     checkStatus();
     loadExamples();
+    toggleOpenAIOptions();
+    document.querySelectorAll('input[name="gen-mode"]').forEach((radio) => {
+        radio.addEventListener("change", toggleOpenAIOptions);
+    });
 });
 
 async function checkStatus() {
@@ -39,6 +55,7 @@ async function checkStatus() {
             const firstRadio = document.getElementById("mode-" + firstAvailableId);
             if (firstRadio && !firstRadio.checked) firstRadio.checked = true;
         }
+        toggleOpenAIOptions();
 
         if (data.loaded) {
             const provider = data.provider ? `${data.provider}` : "backend";
@@ -129,17 +146,27 @@ async function generate() {
         const selectedMode = document.querySelector('input[name="gen-mode"]:checked');
         const mode = selectedMode && !selectedMode.disabled ? selectedMode.value : null;
 
+        const body = {
+            mission,
+            mode: mode || undefined,
+            constrained: document.getElementById("use-constraint").checked ? "regex" : "off",
+            max_new_tokens: parseInt(document.getElementById("max-new-tokens").value, 10) || 1024,
+            temperature: parseFloat(document.getElementById("temperature").value || "0"),
+            write_run: document.getElementById("write-run").checked,
+        };
+        if (mode === "openai") {
+            const openaiModel = document.getElementById("openai-model")?.value?.trim();
+            const openaiBaseUrl = document.getElementById("openai-base-url")?.value?.trim();
+            const openaiApiKey = document.getElementById("openai-api-key")?.value?.trim();
+            if (openaiModel) body.openai_model = openaiModel;
+            if (openaiBaseUrl) body.openai_base_url = openaiBaseUrl;
+            if (openaiApiKey) body.openai_api_key = openaiApiKey;
+        }
+
         const res = await fetch("/api/generate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                mission,
-                mode: mode || undefined,
-                constrained: document.getElementById("use-constraint").checked ? "regex" : "off",
-                max_new_tokens: parseInt(document.getElementById("max-new-tokens").value, 10) || 1024,
-                temperature: parseFloat(document.getElementById("temperature").value || "0"),
-                write_run: document.getElementById("write-run").checked,
-            }),
+            body: JSON.stringify(body),
             signal: controller.signal,
         });
         clearTimeout(timeoutId);

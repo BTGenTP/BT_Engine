@@ -14,6 +14,8 @@ from xml_extraction import extract_root_xml
 
 DEFAULT_ADAPTER_DIR = Path(__file__).resolve().parent / "models" / "lora_adapter"
 DEFAULT_HF_CACHE_DIR = Path(os.getenv("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
+DEFAULT_OPENAI_MODEL = "mistral-large-latest"
+DEFAULT_OPENAI_BASE_URL = "https://api.mistral.ai/v1"
 
 TEST_MISSIONS_NAV2_XML = [
     "Navigue vers le goal (Nav2), puis attends 2.0 s.",
@@ -507,6 +509,140 @@ class Nav2XmlRemoteGenerator:
         return result
 
 
+class Nav2XmlOpenAICompatibleGenerator:
+    """Remote inference via an OpenAI-compatible API (e.g. Mistral)."""
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        base_url: str,
+        api_key: str,
+        model_key: str = "mistral7b",
+        timeout_s: float = 120.0,
+        max_retries: int = 2,
+    ) -> None:
+        self.model = (model or DEFAULT_OPENAI_MODEL).strip()
+        self.base_url = (base_url or DEFAULT_OPENAI_BASE_URL).strip().rstrip("/")
+        self.api_key = (api_key or "").strip()
+        self.model_key = model_key
+        self.timeout_s = float(timeout_s)
+        self.max_retries = max(0, int(max_retries))
+        self.catalog = load_nav2_catalog()
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key)
+
+    @property
+    def loaded(self) -> bool:
+        return self.configured
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "configured": self.configured,
+            "loaded": self.loaded,
+            "provider": "openai_compatible",
+            "model_key": self.model_key,
+            "model": self.model,
+            "base_url": self.base_url,
+            "remote_timeout_s": self.timeout_s,
+            "remote_max_retries": self.max_retries,
+        }
+
+    def _chat_completion(
+        self, *, prompt: str, max_new_tokens: int, temperature: float
+    ) -> str:
+        try:
+            from openai import OpenAI
+        except Exception as exc:
+            raise RuntimeError(
+                "openai is required for OpenAI-compatible inference. Install: uv sync --extra openai"
+            ) from exc
+        client = OpenAI(
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout=float(self.timeout_s),
+            max_retries=self.max_retries,
+        )
+        do_sample = bool(float(temperature) > 0.0)
+        kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": int(max_new_tokens),
+        }
+        if do_sample:
+            kwargs["temperature"] = float(temperature)
+        resp = client.chat.completions.create(**kwargs)
+        text = (resp.choices[0].message.content if resp.choices else "") or ""
+        return str(text).strip()
+
+    def generate(
+        self,
+        mission: str,
+        *,
+        constrained: str = "regex",
+        max_new_tokens: int = 1024,
+        temperature: float = 0.0,
+        write_run: bool = True,
+        strict_attrs: bool = True,
+        strict_blackboard: bool = True,
+    ) -> Dict[str, Any]:
+        if not self.configured:
+            raise RuntimeError(
+                "OpenAI-compatible inference not configured. Set NAV2_XML_OPENAI_API_KEY or OPENAI_API_KEY (or provide key in UI)."
+            )
+        _ = constrained
+        prompt = _make_prompt_xml_no_tokenizer(
+            self.catalog, mission, model_key=self.model_key
+        )
+        t0 = time.perf_counter()
+        llm_raw = self._chat_completion(
+            prompt=prompt,
+            max_new_tokens=int(max_new_tokens),
+            temperature=float(temperature),
+        )
+        latency_ms = int((time.perf_counter() - t0) * 1000.0)
+        xml = extract_root_xml(llm_raw) or llm_raw
+        payload = build_xml_payload(
+            xml, strict_attrs=strict_attrs, strict_blackboard=strict_blackboard
+        )
+        result: Dict[str, Any] = {
+            "provider": "openai_compatible",
+            "model": self.model,
+            "temperature": float(temperature),
+            "constraints": {"enabled": False, "kind": constrained},
+            "prompt": prompt,
+            "raw_xml": llm_raw,
+            "xml": payload["xml"],
+            "valid": bool(payload["valid"]),
+            "score": float(payload["score"]),
+            "errors": payload["errors"],
+            "warnings": payload["warnings"],
+            "summary": payload["summary"],
+            "validation_report": payload["validation_report"],
+            "structure": payload.get("structure") or {},
+            "generation_time_s": float(latency_ms) / 1000.0,
+            "run_dir": None,
+        }
+        if write_run:
+            run_dir = write_nav2_xml_run_artifacts(
+                mission=mission,
+                prompt=prompt,
+                llm_raw=llm_raw,
+                provider="openai_compatible",
+                model_name=self.model,
+                temperature=float(temperature),
+                constraints_kind=str(constrained),
+                strict_attrs=bool(strict_attrs),
+                strict_blackboard=bool(strict_blackboard),
+                latency_ms=int(latency_ms),
+                xml_payload=payload,
+            )
+            result["run_dir"] = run_dir
+        return result
+
+
 def _lora_deps_available() -> Tuple[bool, str]:
     try:
         import peft  # noqa: F401
@@ -531,6 +667,14 @@ def _remote_deps_available() -> Tuple[bool, str]:
         return True, ""
     except ImportError as e:
         return False, f"Dépendances non installées. Exécuter: uv sync --extra remote ({e})"
+
+
+def _openai_deps_available() -> Tuple[bool, str]:
+    try:
+        from openai import OpenAI  # noqa: F401
+        return True, ""
+    except ImportError as e:
+        return False, f"Dépendances non installées. Exécuter: uv sync --extra openai ({e})"
 
 
 def get_modes_availability() -> List[Dict[str, Any]]:
@@ -572,13 +716,42 @@ def get_modes_availability() -> List[Dict[str, Any]]:
         "reason": "" if (remote_cfg_ok and remote_deps_ok) else (remote_deps_msg if remote_cfg_ok else "NAV2_XML_REMOTE_MODEL_ID et HF_TOKEN non définis"),
     })
 
+    # OpenAI-compatible: deps required; api_key from env or UI
+    openai_deps_ok, openai_deps_msg = _openai_deps_available()
+    openai_key_env = (os.getenv("NAV2_XML_OPENAI_API_KEY", "").strip() or os.getenv("OPENAI_API_KEY", "").strip())
+    openai_available = openai_deps_ok
+    openai_reason = ""
+    if not openai_deps_ok:
+        openai_reason = openai_deps_msg
+    elif not openai_key_env:
+        openai_reason = "Définir NAV2_XML_OPENAI_API_KEY ou saisir la clé dans l'interface"
+    modes.append({
+        "id": "openai",
+        "label": "Remote (OpenAI-compatible)",
+        "available": openai_available,
+        "reason": openai_reason,
+    })
+
     return modes
 
 
 def get_generator_for_mode(mode: str):
-    """Return generator for the given mode (lora, gguf, remote). Returns None if mode unavailable."""
+    """Return generator for the given mode (lora, gguf, remote, openai). Returns None if mode unavailable."""
     mode = (mode or "").strip().lower()
     model_key = os.getenv("NAV2_MODEL_KEY", "mistral7b")
+
+    if mode == "openai":
+        api_key = os.getenv("NAV2_XML_OPENAI_API_KEY", "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
+        if not api_key:
+            return None
+        return Nav2XmlOpenAICompatibleGenerator(
+            model=os.getenv("NAV2_XML_OPENAI_MODEL", "").strip() or DEFAULT_OPENAI_MODEL,
+            base_url=os.getenv("NAV2_XML_OPENAI_BASE_URL", "").strip() or DEFAULT_OPENAI_BASE_URL,
+            api_key=api_key,
+            model_key=model_key,
+            timeout_s=float(os.getenv("NAV2_XML_OPENAI_TIMEOUT_S", "120")),
+            max_retries=int(os.getenv("NAV2_XML_OPENAI_MAX_RETRIES", "2")),
+        )
 
     if mode == "gguf":
         gguf_path = os.getenv("NAV2_XML_GGUF_PATH", "").strip()
@@ -621,8 +794,8 @@ def get_generator_for_mode(mode: str):
 
 
 def build_nav2_xml_generator_from_env():
-    """Build the active generator from env: GGUF > Remote > Local LoRA (default)."""
-    for mode_id in ("gguf", "remote", "lora"):
+    """Build the active generator from env: GGUF > Remote > OpenAI > Local LoRA (default)."""
+    for mode_id in ("gguf", "remote", "openai", "lora"):
         g = get_generator_for_mode(mode_id)
         if g is not None:
             return g
