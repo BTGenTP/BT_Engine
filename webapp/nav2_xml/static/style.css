@@ -83,6 +83,13 @@ code .val { color: var(--val-color); }
 .score-bar { height: 100%; border-radius: 4px; transition: width 0.4s ease, background 0.4s ease; }
 .score-value { font-weight: 700; font-size: 1rem; min-width: 3rem; text-align: right; }
 
+.request-log-panel { margin-top: 1rem; padding: 0.75rem; background: var(--bg); border-radius: 0.5rem; border: 1px solid var(--border); font-size: 0.85rem; }
+.request-log-panel h4 { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; }
+.request-log-line { font-family: monospace; color: var(--text); }
+.request-log-status { font-family: monospace; margin-top: 0.25rem; color: var(--text-muted); }
+.request-log-status.ok { color: var(--green); }
+.request-log-status.err { color: var(--red); }
+
 #warnings-list, #errors-list { margin-top: 0.5rem; }
 .warning-item, .error-item { padding: 0.4rem 0.6rem; border-radius: 0.3rem; font-size: 0.8rem; margin-bottom: 0.3rem; font-family: monospace; }
 .warning-item { background: rgba(234, 179, 8, 0.15); border-left: 3px solid var(--yellow); color: var(--yellow); }

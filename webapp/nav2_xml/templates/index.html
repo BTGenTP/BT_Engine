@@ -118,7 +118,7 @@
 
                     <div class="nav2-options">
                         <label>
-                            Goal name (locations.yaml)
+                            Goal name
                             <input type="text" id="ros2-goal-name" placeholder="Station_A">
                         </label>
                         <label>
@@ -142,6 +142,12 @@
                         </label>
                         <button onclick="transferToRos2()">Transferer XML</button>
                         <button onclick="executeOnRos2()">Executer</button>
+                    </div>
+
+                    <div class="request-log-panel" id="ros2-request-log">
+                        <h4>Requête / État</h4>
+                        <div class="request-log-line" id="ros2-request-line">—</div>
+                        <div class="request-log-status" id="ros2-request-status">—</div>
                     </div>
 
                     <pre class="hidden" id="ros2-output-pre"><code id="ros2-output"></code></pre>

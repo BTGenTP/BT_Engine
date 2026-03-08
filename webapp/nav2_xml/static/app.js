@@ -1,4 +1,5 @@
-const MAX_TIME_S = 240;
+const MAX_TIME_S = 300;  // 5 min
+const ROS2_REQUEST_TIMEOUT_MS = 300 * 1000;  // 5 min pour transfer / execute
 let progressInterval = null;
 let progressStart = 0;
 let lastXml = "";
@@ -92,13 +93,13 @@ function startProgress() {
         bar.style.width = pct + "%";
         const elMin = Math.floor(elapsed / 60);
         const elSec = Math.floor(elapsed % 60);
-        timer.textContent = `${elMin}:${String(elSec).padStart(2, "0")} / 4:00`;
+        timer.textContent = `${elMin}:${String(elSec).padStart(2, "0")} / 5:00`;
         if (pct > 50) {
             text.textContent = "Inference en cours...";
         }
         if (elapsed >= MAX_TIME_S) {
             clearInterval(progressInterval);
-            text.textContent = "Timeout depasse (4 min)";
+            text.textContent = "Timeout depasse (5 min)";
         }
     }, 1000);
 }
@@ -212,6 +213,17 @@ function showRos2Output(obj) {
     out.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
 }
 
+function updateRos2RequestLog(method, path, statusText, isOk) {
+    const lineEl = document.getElementById("ros2-request-line");
+    const statusEl = document.getElementById("ros2-request-status");
+    if (lineEl) lineEl.textContent = `${method} ${path} HTTP/1.1`;
+    if (statusEl) {
+        statusEl.textContent = statusText || "—";
+        statusEl.classList.toggle("ok", isOk);
+        statusEl.classList.toggle("err", !isOk);
+    }
+}
+
 function getRos2Form() {
     return {
         filename: (document.getElementById("ros2-filename")?.value || "").trim() || null,
@@ -231,18 +243,31 @@ async function transferToRos2() {
         return;
     }
     const form = getRos2Form();
-    const res = await fetch("/api/transfer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ xml, filename: form.filename }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
+    updateRos2RequestLog("POST", "/api/transfer", "Envoi...", true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), ROS2_REQUEST_TIMEOUT_MS);
+    try {
+        const res = await fetch("/api/transfer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ xml, filename: form.filename }),
+            signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        const statusText = res.status + " " + (res.statusText || "");
+        updateRos2RequestLog("POST", "/api/transfer", statusText, res.ok);
+        const data = await res.json();
+        if (!res.ok) {
+            showRos2Output(data);
+            alert(data.error || "Erreur transfert ROS2");
+            return;
+        }
         showRos2Output(data);
-        alert(data.error || "Erreur transfert ROS2");
-        return;
+    } catch (e) {
+        clearTimeout(timeoutId);
+        updateRos2RequestLog("POST", "/api/transfer", e.name === "AbortError" ? "timed out" : e.message, false);
+        showRos2Output({ error: e.name === "AbortError" ? "Requête expirée (5 min)." : String(e.message) });
     }
-    showRos2Output(data);
 }
 
 async function executeOnRos2() {
@@ -260,22 +285,35 @@ async function executeOnRos2() {
         alert(msg);
         return;
     }
-    const res = await fetch("/api/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            xml: xml || null,
-            filename: form.filename,
-            goal_name: form.goal_name,
-            goal_pose: form.goal_pose,
-            initial_pose: form.initial_pose,
-            allow_invalid: form.allow_invalid,
-            start_stack_if_needed: form.start_stack_if_needed,
-            restart_navigation: form.restart_navigation,
-        }),
-    });
-    const data = await res.json();
-    showRos2Output(data);
+    updateRos2RequestLog("POST", "/api/execute", "Envoi...", true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), ROS2_REQUEST_TIMEOUT_MS);
+    try {
+        const res = await fetch("/api/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                xml: xml || null,
+                filename: form.filename,
+                goal_name: form.goal_name,
+                goal_pose: form.goal_pose,
+                initial_pose: form.initial_pose,
+                allow_invalid: form.allow_invalid,
+                start_stack_if_needed: form.start_stack_if_needed,
+                restart_navigation: form.restart_navigation,
+            }),
+            signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        const statusText = res.status + " " + (res.statusText || "");
+        updateRos2RequestLog("POST", "/api/execute", statusText, res.ok);
+        const data = await res.json();
+        showRos2Output(data);
+    } catch (e) {
+        clearTimeout(timeoutId);
+        updateRos2RequestLog("POST", "/api/execute", e.name === "AbortError" ? "timed out" : e.message, false);
+        showRos2Output({ error: e.name === "AbortError" ? "Requête expirée (5 min)." : String(e.message) });
+    }
 }
 
 function renderList(id, items, className) {
