@@ -35,6 +35,17 @@ def _make_prompt(model_key: str, tokenizer, catalog: Dict[str, Any], mission: st
     return prompt
 
 
+def _make_prompt_xml_no_tokenizer(
+    catalog: Dict[str, Any], mission: str, model_key: str = "mistral7b"
+) -> str:
+    """Build prompt string for GGUF or remote (no HF tokenizer). Mistral and phi2 only."""
+    if model_key == "phi2":
+        prompt, _ = build_phi2_prompt(mission=mission, catalog=catalog)
+        return prompt
+    prompt, _ = build_mistral_inst_prompt(mission=mission, catalog=catalog)
+    return prompt
+
+
 class Nav2XmlGenerator:
     def __init__(
         self,
@@ -245,7 +256,278 @@ class Nav2XmlGenerator:
         return result
 
 
-def build_nav2_xml_generator_from_env() -> Nav2XmlGenerator:
+class Nav2XmlGeneratorGGUF:
+    """Local GGUF-based BT XML generator (no HF tokenizer, no regex constraints)."""
+
+    def __init__(
+        self,
+        *,
+        gguf_path: str | Path,
+        model_key: str = "mistral7b",
+        n_ctx: int = 2048,
+        n_threads: int | None = None,
+    ) -> None:
+        self.gguf_path = Path(gguf_path).expanduser().resolve()
+        self.model_key = model_key
+        self.n_ctx = n_ctx
+        self.n_threads = n_threads or os.cpu_count() or 4
+        self.catalog = load_nav2_catalog()
+        self._lock = threading.Lock()
+        self._llm = None
+
+    @property
+    def configured(self) -> bool:
+        return self.gguf_path.is_file()
+
+    @property
+    def loaded(self) -> bool:
+        return self._llm is not None
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "configured": self.configured,
+            "loaded": self.loaded,
+            "provider": "gguf_local",
+            "model_key": self.model_key,
+            "model": str(self.gguf_path),
+        }
+
+    def _ensure_loaded(self) -> None:
+        if self._llm is not None:
+            return
+        with self._lock:
+            if self._llm is not None:
+                return
+            if not self.gguf_path.is_file():
+                raise FileNotFoundError(f"GGUF model not found: {self.gguf_path}")
+            try:
+                from llama_cpp import Llama
+            except Exception as exc:
+                raise RuntimeError(
+                    "llama-cpp-python is required for GGUF. Install llama-cpp-python."
+                ) from exc
+            self._llm = Llama(
+                model_path=str(self.gguf_path),
+                n_ctx=self.n_ctx,
+                n_threads=self.n_threads,
+                verbose=False,
+            )
+
+    def generate(
+        self,
+        mission: str,
+        *,
+        constrained: str = "regex",
+        max_new_tokens: int = 1024,
+        temperature: float = 0.0,
+        write_run: bool = True,
+        strict_attrs: bool = True,
+        strict_blackboard: bool = True,
+    ) -> Dict[str, Any]:
+        self._ensure_loaded()
+        assert self._llm is not None
+        prompt = _make_prompt_xml_no_tokenizer(
+            self.catalog, mission, model_key=self.model_key
+        )
+        do_sample = bool(float(temperature) > 0.0)
+        with self._lock:
+            t0 = time.perf_counter()
+            out = self._llm(
+                prompt,
+                max_tokens=int(max_new_tokens),
+                temperature=float(temperature) if do_sample else 0.0,
+                repeat_penalty=1.05,
+                echo=False,
+            )
+            latency_ms = int((time.perf_counter() - t0) * 1000.0)
+        llm_raw = (out["choices"][0]["text"] if out.get("choices") else "").strip()
+        xml = extract_root_xml(llm_raw) or llm_raw
+        payload = build_xml_payload(
+            xml, strict_attrs=strict_attrs, strict_blackboard=strict_blackboard
+        )
+        result: Dict[str, Any] = {
+            "provider": "gguf_local",
+            "model": str(self.gguf_path),
+            "temperature": float(temperature),
+            "constraints": {"enabled": False, "kind": constrained},
+            "prompt": prompt,
+            "raw_xml": llm_raw,
+            "xml": payload["xml"],
+            "valid": bool(payload["valid"]),
+            "score": float(payload["score"]),
+            "errors": payload["errors"],
+            "warnings": payload["warnings"],
+            "summary": payload["summary"],
+            "validation_report": payload["validation_report"],
+            "structure": payload.get("structure") or {},
+            "generation_time_s": float(latency_ms) / 1000.0,
+            "run_dir": None,
+        }
+        if write_run:
+            run_dir = write_nav2_xml_run_artifacts(
+                mission=mission,
+                prompt=prompt,
+                llm_raw=llm_raw,
+                provider="gguf_local",
+                model_name=str(self.gguf_path),
+                temperature=float(temperature),
+                constraints_kind=str(constrained),
+                strict_attrs=bool(strict_attrs),
+                strict_blackboard=bool(strict_blackboard),
+                latency_ms=int(latency_ms),
+                xml_payload=payload,
+            )
+            result["run_dir"] = run_dir
+        return result
+
+
+class Nav2XmlRemoteGenerator:
+    """Remote inference (Hugging Face Inference API) for a merged Nav2 BT XML model."""
+
+    def __init__(
+        self,
+        *,
+        model_id: str,
+        token: str,
+        model_key: str = "mistral7b",
+        timeout_s: float = 120.0,
+        max_retries: int = 2,
+    ) -> None:
+        self.model_id = (model_id or "").strip()
+        self.token = (token or "").strip()
+        self.model_key = model_key
+        self.timeout_s = float(timeout_s)
+        self.max_retries = max(0, int(max_retries))
+        self.catalog = load_nav2_catalog()
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.model_id) and bool(self.token)
+
+    @property
+    def loaded(self) -> bool:
+        return self.configured
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "configured": self.configured,
+            "loaded": self.loaded,
+            "provider": "hf_inference_api",
+            "model_key": self.model_key,
+            "model": self.model_id,
+            "remote_timeout_s": self.timeout_s,
+            "remote_max_retries": self.max_retries,
+        }
+
+    def _text_generation(
+        self, *, prompt: str, max_new_tokens: int, temperature: float
+    ) -> str:
+        try:
+            from huggingface_hub import InferenceClient
+        except Exception as exc:
+            raise RuntimeError(
+                "huggingface_hub is required for remote inference. Install huggingface_hub>=0.26."
+            ) from exc
+        client = InferenceClient(
+            model=self.model_id, token=self.token, timeout=self.timeout_s
+        )
+        do_sample = bool(float(temperature) > 0.0)
+        kwargs: Dict[str, Any] = {
+            "max_new_tokens": int(max_new_tokens),
+            "do_sample": do_sample,
+            "return_full_text": False,
+        }
+        if do_sample:
+            kwargs["temperature"] = float(temperature)
+        return str(client.text_generation(prompt, **kwargs)).strip()
+
+    def generate(
+        self,
+        mission: str,
+        *,
+        constrained: str = "regex",
+        max_new_tokens: int = 1024,
+        temperature: float = 0.0,
+        write_run: bool = True,
+        strict_attrs: bool = True,
+        strict_blackboard: bool = True,
+    ) -> Dict[str, Any]:
+        if not self.configured:
+            raise RuntimeError(
+                "Remote inference not configured. Set NAV2_XML_REMOTE_MODEL_ID and HF_TOKEN (or NAV2_XML_HF_TOKEN)."
+            )
+        _ = constrained
+        prompt = _make_prompt_xml_no_tokenizer(
+            self.catalog, mission, model_key=self.model_key
+        )
+        t0 = time.perf_counter()
+        llm_raw = self._text_generation(
+            prompt=prompt,
+            max_new_tokens=int(max_new_tokens),
+            temperature=float(temperature),
+        )
+        latency_ms = int((time.perf_counter() - t0) * 1000.0)
+        xml = extract_root_xml(llm_raw) or llm_raw
+        payload = build_xml_payload(
+            xml, strict_attrs=strict_attrs, strict_blackboard=strict_blackboard
+        )
+        result: Dict[str, Any] = {
+            "provider": "hf_inference_api",
+            "model": self.model_id,
+            "temperature": float(temperature),
+            "constraints": {"enabled": False, "kind": constrained},
+            "prompt": prompt,
+            "raw_xml": llm_raw,
+            "xml": payload["xml"],
+            "valid": bool(payload["valid"]),
+            "score": float(payload["score"]),
+            "errors": payload["errors"],
+            "warnings": payload["warnings"],
+            "summary": payload["summary"],
+            "validation_report": payload["validation_report"],
+            "structure": payload.get("structure") or {},
+            "generation_time_s": float(latency_ms) / 1000.0,
+            "run_dir": None,
+        }
+        if write_run:
+            run_dir = write_nav2_xml_run_artifacts(
+                mission=mission,
+                prompt=prompt,
+                llm_raw=llm_raw,
+                provider="hf_inference_api",
+                model_name=self.model_id,
+                temperature=float(temperature),
+                constraints_kind=str(constrained),
+                strict_attrs=bool(strict_attrs),
+                strict_blackboard=bool(strict_blackboard),
+                latency_ms=int(latency_ms),
+                xml_payload=payload,
+            )
+            result["run_dir"] = run_dir
+        return result
+
+
+def build_nav2_xml_generator_from_env():
+    """Build the active generator from env: GGUF > Remote > Local LoRA."""
+    gguf_path = os.getenv("NAV2_XML_GGUF_PATH", "").strip()
+    if gguf_path and Path(gguf_path).expanduser().is_file():
+        return Nav2XmlGeneratorGGUF(
+            gguf_path=gguf_path,
+            model_key=os.getenv("NAV2_MODEL_KEY", "mistral7b"),
+        )
+    remote_id = os.getenv("NAV2_XML_REMOTE_MODEL_ID", "").strip()
+    token = (
+        os.getenv("NAV2_XML_HF_TOKEN", "").strip()
+        or os.getenv("HF_TOKEN", "").strip()
+    )
+    if remote_id and token:
+        return Nav2XmlRemoteGenerator(
+            model_id=remote_id,
+            token=token,
+            model_key=os.getenv("NAV2_MODEL_KEY", "mistral7b"),
+            timeout_s=float(os.getenv("NAV2_XML_REMOTE_TIMEOUT_S", "120")),
+            max_retries=int(os.getenv("NAV2_XML_REMOTE_MAX_RETRIES", "2")),
+        )
     model_key = os.getenv("NAV2_MODEL_KEY", "mistral7b")
     adapter_dir = os.getenv("NAV2_ADAPTER_DIR", None)
     base_model_dir = os.getenv("NAV2_BASE_MODEL_DIR", None)

@@ -3,3 +3,4 @@ __pycache__/
 models/
 !models/lora_adapter/.gitkeep
 .env
+runs/
