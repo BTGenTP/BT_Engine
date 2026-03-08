@@ -52,7 +52,7 @@ MODELS: dict[str, ModelSpec] = {
         epochs=6,
         lr=2e-4,
         chat_template=True,
-        response_anchor="\n### Steps JSON:",
+        response_anchor="\n### BT XML:",
     ),
     "phi2": ModelSpec(
         key="phi2",
@@ -66,6 +66,7 @@ MODELS: dict[str, ModelSpec] = {
         epochs=8,
         lr=3e-4,
         chat_template=False,
-        response_anchor="\n### Steps JSON:",
+        response_anchor="\n### BT XML:",
     ),
 }
+

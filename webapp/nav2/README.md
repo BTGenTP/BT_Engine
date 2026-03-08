@@ -1,18 +1,70 @@
-# BT_Engine — Nav2 Webapp
+# BT_Engine — Nav2 XML Webapp
 
-Projet autonome pour l’inférence `mission -> steps JSON -> BT XML -> validation stricte` avec un modèle HF + LoRA orienté Nav2.
+Projet autonome pour l’inférence **mission -> BT XML direct -> validation stricte** avec un modèle orienté Nav2 (LoRA local, GGUF local, ou API HF).
+
+## Choix du mode dans l’interface
+
+L’utilisateur choisit le **mode de génération** dans la webapp (sélecteur en haut du panneau Mission). Les trois options sont :
+
+- **Local (base+adapter)** — LoRA local (HF + adapter)
+- **Local (GGUF)** — Modèle GGUF chargé en local
+- **Remote (Hugging Face)** — Inférence via l’API Hugging Face
+
+Les options **non disponibles** (prérequis ou variables d’environnement manquants, ou dépendances non installées) sont **grisées** et une courte raison s’affiche. Seuls les modes disponibles sont sélectionnables.
+
+## Dépendances (uv)
+
+Le projet utilise **uv** pour la gestion des dépendances. Les dépendances sont réparties par mode via des **extras** :
+
+| Extra | Mode | Dépendances |
+|-------|------|-------------|
+| *(aucun)* | Base | `fastapi`, `uvicorn`, `jinja2`, `huggingface_hub` |
+| `lora` | Local (base+adapter) | `torch`, `transformers`, `peft`, `bitsandbytes`, `lm-format-enforcer` |
+| `gguf` | Local (GGUF) | `llama-cpp-python` |
+| `remote` | Remote (HF) | *(utilise `huggingface_hub` du core)* |
+
+**Installation :**
+
+```bash
+pip install uv
+cd repositories/BT_Engine/webapp/nav2_xml
+uv sync --extra lora --extra gguf --extra remote   # tous les modes
+# ou pour un seul mode :
+uv sync --extra lora
+uv sync --extra gguf
+uv sync --extra remote   # optionnel, rien de plus que le core
+```
+
+Lancer avec uv : `uv run uvicorn app:app --host 0.0.0.0 --port 8000`
+
+## Modes de génération (config)
+
+| Mode | Variables d’environnement | Prérequis |
+|------|---------------------------|-----------|
+| **Local LoRA** | `NAV2_ADAPTER_DIR`, `NAV2_BASE_MODEL_DIR` (opt.), `NAV2_MODEL_KEY`, `NAV2_LOAD_IN_4BIT`, `NAV2_ALLOW_DOWNLOADS` | Adapter LoRA + base ; installer avec `uv sync --extra lora` |
+| **Local GGUF** | `NAV2_XML_GGUF_PATH` (fichier `.gguf`), `NAV2_MODEL_KEY` | Fichier GGUF ; installer avec `uv sync --extra gguf` |
+| **Remote (HF)** | `NAV2_XML_REMOTE_MODEL_ID`, `HF_TOKEN` ou `NAV2_XML_HF_TOKEN`, optionnel : `NAV2_XML_REMOTE_TIMEOUT_S`, `NAV2_XML_REMOTE_MAX_RETRIES` | Modèle mergé sur HF ; core suffit |
+
+- L’endpoint `/api/status` renvoie la liste `modes` (disponibilité et raison si indisponible) et le `provider` du générateur par défaut.
+- `POST /api/generate` accepte un champ optionnel `mode` (`"lora"` | `"gguf"` | `"remote"`) pour forcer le mode pour cette requête.
+
+## Conversion merged → GGUF (job SLURM)
+
+Pour obtenir un fichier GGUF à utiliser avec le mode Local GGUF :
+
+1. Exécuter d’abord le job de merge LoRA : `repositories/FineTuningOnTelecomCluster/finetune_Nav2_XML/slurm/job_merge_nav2_xml_mistral7b_lora_adapter.sh`.
+2. Puis lancer le job de conversion : `repositories/FineTuningOnTelecomCluster/finetune_Nav2_XML/slurm/job_convert_nav2_xml_merged_to_gguf.sh` (même `WORK_DIR` / `OUT_DIR` que le merge).
+3. Récupérer le fichier GGUF produit (ex. `nav2_xml_mistral7b_q4_k_m.gguf`) et définir `NAV2_XML_GGUF_PATH` vers ce fichier.
 
 ## Architecture
 
 ```text
-webapp/nav2/
+webapp/nav2_xml/
+├── pyproject.toml      # uv, optional-dependencies par mode (lora, gguf, remote)
 ├── app.py
 ├── inference.py
 ├── nav2_pipeline.py
 ├── bt_validation.py
-├── json_to_xml.py
-├── steps_parsing.py
-├── catalog_io.py
 ├── model_registry.py
 ├── prompting.py
 ├── run_artifacts.py
@@ -23,8 +75,6 @@ webapp/nav2/
 │   └── reference_behavior_trees/
 ├── templates/
 ├── static/
-├── models/
-│   └── lora_adapter/
 └── runs/
 ```
 
@@ -33,155 +83,25 @@ webapp/nav2/
 | Route | Méthode | Description |
 | --- | --- | --- |
 | `/` | GET | Interface HTML |
-| `/api/status` | GET | État du backend HF + LoRA |
+| `/api/status` | GET | État du backend (provider actif : hf_local_peft / gguf_local / hf_inference_api) |
 | `/api/examples` | GET | Exemples de missions Nav2 |
-| `/api/generate` | POST | Génère `steps JSON`, BT XML et rapport strict |
-| `/api/validate/steps` | POST | Valide des `steps JSON` |
-| `/api/steps-to-xml` | POST | Convertit des `steps JSON` vers XML |
+| `/api/generate` | POST | Génère un BT XML direct + rapport strict |
 | `/api/validate/xml` | POST | Valide un XML BT |
 | `/api/transfer` | POST | Transfère un BT XML au `ROS2_Container` |
 | `/api/execute` | POST | Demande l’exécution dans `ROS2_Container` |
 
-## Déploiement du modèle + LoRA
+## Lancer la webapp
 
-Deux modes sont supportés :
-
-- **Recommandé (le moins coûteux en VRAM/temps)** : **inférence distante** via Hugging Face Inference API (serverless) sur un **modèle LoRA fusionné**, hébergé en **privé**.
-  - aucun téléchargement de poids local
-  - conserve le comportement LoRA
-  - nécessite un `NAV2_HF_TOKEN`
-- **Fallback** : chargement **local** `transformers + peft` (mode hors-ligne), si vous ne voulez/peuvez pas utiliser l’API distante.
-
-Il n'y a pas de conversion GGUF dans le flux par défaut. Une conversion GGUF ne doit etre envisagée qu'en plan B si le backend HF local reste trop lourd.
-
-### Option A — Inférence distante (HF Inference API, privé)
-
-Pré-requis : publier un **modèle fusionné** (base + LoRA) sur le Hub (repo privé), puis utiliser un token.
-
-Variables d’environnement :
+**Avec uv (recommandé) :**
 
 ```bash
-export NAV2_PROVIDER=hf_inference_api
-export NAV2_MODEL_KEY=mistral7b
-export NAV2_REMOTE_MODEL_ID=<org>/<model-merged>
-export NAV2_HF_TOKEN=<hf_token>
-export NAV2_REMOTE_TIMEOUT_S=120
-export NAV2_REMOTE_MAX_RETRIES=2
-export ROS2_CONTROL_API_BASE=http://localhost:8001
+cd repositories/BT_Engine/webapp/nav2_xml
+uv sync --extra lora --extra gguf   # selon les modes souhaités
+uv run uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-Notes :
-- le mode remote est actuellement prévu pour `NAV2_MODEL_KEY=mistral7b` (prompt sans chat template).
+**Avec pip (fallback) :**  
+`pip install -r requirements.txt` installe toutes les dépendances (tous modes). Puis `python -m uvicorn app:app --host 0.0.0.0 --port 8000`.
 
-### Option B — Local HF + LoRA (hors-ligne)
+Dans l’interface, choisir le mode de génération (les options non disponibles sont grisées). Pour qu’un mode soit disponible : configurer les variables d’environnement correspondantes et installer l’extra uv associé si besoin.
 
-Le projet charge directement l’adapter LoRA avec `transformers + peft`.
-En local, le backend fonctionne en mode hors-ligne par défaut :
-- aucun téléchargement Hugging Face n'est autorisé au premier appel (sauf si `NAV2_ALLOW_DOWNLOADS=1`)
-- il faut fournir un modèle de base déjà présent localement, soit via un dossier explicite, soit via un cache HF prérempli
-
-### Étape 1 — Précharger le modèle de base hors-ligne
-
-Option recommandée: télécharger une fois le modèle de base dans un dossier dédié hors du repo.
-
-```bash
-python3 - <<'PY'
-from huggingface_hub import snapshot_download
-snapshot_download(
-    repo_id="mistralai/Mistral-7B-Instruct-v0.2",
-    local_dir="/opt/models/Mistral-7B-Instruct-v0.2",
-    local_dir_use_symlinks=False,
-)
-PY
-```
-
-Ensuite, pointer explicitement ce dossier:
-
-```bash
-export NAV2_BASE_MODEL_DIR=/opt/models/Mistral-7B-Instruct-v0.2
-```
-
-Alternative:
-- laisser `NAV2_BASE_MODEL_DIR` vide
-- préremplir `~/.cache/huggingface/hub`
-- garder `NAV2_ALLOW_DOWNLOADS=0`
-
-### Étape 2 — Placer l’adapter LoRA hors du repo
-
-Depuis votre dépôt d’entraînement ou depuis le cluster :
-
-```bash
-mkdir -p /opt/nav2/lora_adapter
-rsync -av /chemin/vers/lora_adapter/ /opt/nav2/lora_adapter/
-```
-
-Puis :
-
-```bash
-export NAV2_ADAPTER_DIR=/opt/nav2/lora_adapter
-```
-
-Le dossier `models/lora_adapter/` du repo peut rester vide, avec seulement `.gitkeep`.
-
-### Étape 3 — Installer les dépendances
-
-```bash
-cd repositories/BT_Engine/webapp/nav2
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### Étape 4 — Variables d’environnement
-
-```bash
-export NAV2_MODEL_KEY=mistral7b
-export NAV2_BASE_MODEL_DIR=/opt/models/Mistral-7B-Instruct-v0.2
-export NAV2_ADAPTER_DIR=/opt/nav2/lora_adapter
-export NAV2_HF_CACHE_DIR="${HOME}/.cache/huggingface/hub"
-export NAV2_LOAD_IN_4BIT=1
-export NAV2_ALLOW_DOWNLOADS=0
-export ROS2_CONTROL_API_BASE=http://localhost:8001
-```
-
-Le mode par défaut est hors-ligne. Pour un bootstrap ponctuel seulement, vous pouvez autoriser un téléchargement:
-
-```bash
-export NAV2_ALLOW_DOWNLOADS=1
-```
-
-### Étape 5 — Lancer la webapp
-
-```bash
-python -m uvicorn app:app --host 0.0.0.0 --port 8000
-```
-
-L’interface est accessible sur [http://localhost:8000](http://localhost:8000).
-
-### Vérification rapide
-
-L’endpoint `GET /api/status` expose l’état du backend:
-- `adapter_ready`
-- `base_model_available`
-- `local_files_only`
-- `downloads_allowed`
-
-## Goal Nav2
-
-Le `goal Nav2` n’est pas généré par le modèle. Le modèle produit seulement l’intention de navigation via la step `NavigateToGoalWithReplanningAndRecovery`.
-
-La cible réelle est injectée à l’exécution par Nav2 via la blackboard `{goal}` :
-
-- soit comme pose explicite `x,y,theta`
-- soit comme nom logique résolu par `ROS2_Container/runtime/BT_Navigator/config/locations.yaml`
-
-## Contrat avec `ROS2_Container`
-
-Le contrat avec le conteneur ROS est strictement HTTP :
-
-- transfert de BT XML
-- démarrage ou réinitialisation de la simulation
-- redémarrage sélectif de la navigation
-- envoi d’un goal
-
-Le projet n’importe aucun code Python depuis `ROS2_Container`.

@@ -1,108 +1,10 @@
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Optional
 from xml.etree import ElementTree as ET
 
 from catalog_io import load_catalog
-
-BB_VAR_RE = re.compile(r"\{([^{}]+)\}")
-CONTROL_ATTR_TYPES: Dict[str, Dict[str, str]] = {
-    "RateController": {"hz": "float"},
-    "DistanceController": {"distance": "float"},
-    "SpeedController": {"max_speed": "float"},
-    "Repeat": {"num_cycles": "int"},
-    "RecoveryNode": {"number_of_retries": "int"},
-}
-
-
-def _infer_type(desc: Any) -> str:
-    if not isinstance(desc, str):
-        return "string"
-    low = desc.lower()
-    if "bool" in low:
-        return "bool"
-    if "int" in low:
-        return "int"
-    if "float" in low or "double" in low:
-        return "float"
-    return "string"
-
-
-def _load_allowlists(catalog: Mapping[str, Any], reference_dir: Path) -> tuple[set[str], dict[str, set[str]], dict[str, set[str]], dict[str, dict[str, str]]]:
-    allowed_tags = {"root", "BehaviorTree", "SubTree"}
-    allowed_attrs = {
-        "root": {"main_tree_to_execute"},
-        "BehaviorTree": {"ID"},
-        "SubTree": {"ID", "__shared_blackboard"},
-    }
-    required_attrs = {
-        "root": {"main_tree_to_execute"},
-        "BehaviorTree": {"ID"},
-        "SubTree": {"ID"},
-    }
-    attr_types = {
-        "root": {"main_tree_to_execute": "string"},
-        "BehaviorTree": {"ID": "string"},
-        "SubTree": {"ID": "string", "__shared_blackboard": "bool"},
-    }
-
-    for item in catalog.get("control_nodes_allowed", []) or []:
-        tag = item.get("bt_tag")
-        attrs = item.get("attributes") or []
-        if isinstance(tag, str) and tag:
-            allowed_tags.add(tag)
-            allowed_attrs.setdefault(tag, set()).update(a for a in attrs if isinstance(a, str))
-            attr_types.setdefault(tag, {}).update(CONTROL_ATTR_TYPES.get(tag, {}))
-
-    for item in catalog.get("atomic_skills", []) or []:
-        tag = item.get("bt_tag")
-        if not isinstance(tag, str) or not tag:
-            continue
-        allowed_tags.add(tag)
-        input_ports = item.get("input_ports") or {}
-        output_ports = item.get("output_ports") or {}
-        allowed_attrs.setdefault(tag, set())
-        attr_types.setdefault(tag, {})
-        if isinstance(input_ports, dict):
-            for key, desc in input_ports.items():
-                if not isinstance(key, str):
-                    continue
-                allowed_attrs[tag].add(key)
-                attr_types[tag][key] = _infer_type(desc)
-                is_optional = isinstance(desc, str) and "optional" in desc.lower()
-                if key not in {"ID", "__shared_blackboard"} and not is_optional:
-                    required_attrs.setdefault(tag, set()).add(key)
-        if isinstance(output_ports, dict):
-            for key in output_ports.keys():
-                if isinstance(key, str):
-                    allowed_attrs[tag].add(key)
-
-    for xml_path in reference_dir.glob("*.xml"):
-        tree = ET.parse(str(xml_path))
-        for el in tree.getroot().iter():
-            allowed_tags.add(el.tag)
-            allowed_attrs.setdefault(el.tag, set()).update(el.attrib.keys())
-
-    return allowed_tags, allowed_attrs, required_attrs, attr_types
-
-
-def _check_type(expected: str, value: str) -> bool:
-    low = (value or "").strip().lower()
-    if BB_VAR_RE.search(value or ""):
-        return True
-    if expected == "bool":
-        return low in {"true", "false"}
-    if expected == "int":
-        return re.fullmatch(r"-?\d+", value or "") is not None
-    if expected == "float":
-        try:
-            float(value)
-            return True
-        except Exception:
-            return False
-    return True
 
 
 def validate_bt_xml(
@@ -114,10 +16,106 @@ def validate_bt_xml(
     reference_dir: Optional[Path] = None,
     external_bb_vars: Optional[list[str]] = None,
 ) -> Dict[str, Any]:
+    """
+    Self-contained strict validator for the webapp.
+    Reuses the logic from nav2/bt_validation.py (copied here to keep nav2_xml standalone).
+    """
+    import re
+
+    BB_VAR_RE = re.compile(r"\{([^{}]+)\}")
+    CONTROL_ATTR_TYPES: Dict[str, Dict[str, str]] = {
+        "RateController": {"hz": "float"},
+        "DistanceController": {"distance": "float"},
+        "SpeedController": {"max_speed": "float"},
+        "Repeat": {"num_cycles": "int"},
+        "RecoveryNode": {"number_of_retries": "int"},
+    }
+
+    def _infer_type(desc: Any) -> str:
+        if not isinstance(desc, str):
+            return "string"
+        low = desc.lower()
+        if "bool" in low:
+            return "bool"
+        if "int" in low:
+            return "int"
+        if "float" in low or "double" in low:
+            return "float"
+        return "string"
+
+    def _load_allowlists(catalog: Dict[str, Any], ref_dir: Path):
+        allowed_tags = {"root", "BehaviorTree", "SubTree"}
+        allowed_attrs = {
+            "root": {"main_tree_to_execute"},
+            "BehaviorTree": {"ID"},
+            "SubTree": {"ID", "__shared_blackboard"},
+        }
+        required_attrs = {"root": {"main_tree_to_execute"}, "BehaviorTree": {"ID"}, "SubTree": {"ID"}}
+        attr_types = {
+            "root": {"main_tree_to_execute": "string"},
+            "BehaviorTree": {"ID": "string"},
+            "SubTree": {"ID": "string", "__shared_blackboard": "bool"},
+        }
+
+        for item in catalog.get("control_nodes_allowed", []) or []:
+            tag = item.get("bt_tag")
+            attrs = item.get("attributes") or []
+            if isinstance(tag, str) and tag:
+                allowed_tags.add(tag)
+                allowed_attrs.setdefault(tag, set()).update(a for a in attrs if isinstance(a, str))
+                attr_types.setdefault(tag, {}).update(CONTROL_ATTR_TYPES.get(tag, {}))
+
+        for item in catalog.get("atomic_skills", []) or []:
+            tag = item.get("bt_tag")
+            if not isinstance(tag, str) or not tag:
+                continue
+            allowed_tags.add(tag)
+            input_ports = item.get("input_ports") or {}
+            output_ports = item.get("output_ports") or {}
+            allowed_attrs.setdefault(tag, set())
+            attr_types.setdefault(tag, {})
+            if isinstance(input_ports, dict):
+                for key, desc in input_ports.items():
+                    if not isinstance(key, str):
+                        continue
+                    allowed_attrs[tag].add(key)
+                    attr_types[tag][key] = _infer_type(desc)
+                    is_optional = isinstance(desc, str) and "optional" in desc.lower()
+                    if key not in {"ID", "__shared_blackboard"} and not is_optional:
+                        required_attrs.setdefault(tag, set()).add(key)
+            if isinstance(output_ports, dict):
+                for key in output_ports.keys():
+                    if isinstance(key, str):
+                        allowed_attrs[tag].add(key)
+
+        for xml_ref in ref_dir.glob("*.xml"):
+            tree = ET.parse(str(xml_ref))
+            for el in tree.getroot().iter():
+                allowed_tags.add(el.tag)
+                allowed_attrs.setdefault(el.tag, set()).update(el.attrib.keys())
+
+        return allowed_tags, allowed_attrs, required_attrs, attr_types
+
+    def _check_type(expected: str, value: str) -> bool:
+        low = (value or "").strip().lower()
+        if BB_VAR_RE.search(value or ""):
+            return True
+        if expected == "bool":
+            return low in {"true", "false"}
+        if expected == "int":
+            return re.fullmatch(r"-?\d+", value or "") is not None
+        if expected == "float":
+            try:
+                float(value)
+                return True
+            except Exception:
+                return False
+        return True
+
     issues: list[Dict[str, Any]] = []
-    catalog = load_catalog(catalog_path)
+    cat = load_catalog(catalog_path)
     ref_dir = reference_dir or (Path(__file__).resolve().parent / "data" / "reference_behavior_trees")
-    allowed_tags, allowed_attrs, required_attrs, attr_types = _load_allowlists(catalog, ref_dir)
+    allowed_tags, allowed_attrs, required_attrs, attr_types = _load_allowlists(cat, ref_dir)
 
     try:
         tree = ET.parse(str(xml_path))
@@ -160,8 +158,6 @@ def validate_bt_xml(
                     issues.append({"level": "error", "code": "attr_type", "message": f"Invalid {expected_type} for {tag}.{attr_name}: {attr_value}", "tag": tag})
                 for var in BB_VAR_RE.findall(attr_value or ""):
                     consumed_bb_vars.add(var)
-                # Nav2 blackboard production heuristics:
-                # - ComputePathToPose produces `{path}` (and similar) via its `path` output port.
                 if tag in {"ComputePathToPose", "ComputePathThroughPoses"} and attr_name == "path":
                     for var in BB_VAR_RE.findall(attr_value or ""):
                         produced_bb_vars.add(var)
@@ -197,9 +193,19 @@ def compute_bt_structure_metrics(xml_path: Path) -> Dict[str, Any]:
     subtree_count = sum(1 for t in tags if t == "SubTree")
     base = {"root", "BehaviorTree"}
     control = {
-        "Sequence", "Fallback", "ReactiveSequence", "ReactiveFallback", "RoundRobin",
-        "PipelineSequence", "RateController", "DistanceController", "SpeedController",
-        "KeepRunningUntilFailure", "Repeat", "Inverter", "RecoveryNode",
+        "Sequence",
+        "Fallback",
+        "ReactiveSequence",
+        "ReactiveFallback",
+        "RoundRobin",
+        "PipelineSequence",
+        "RateController",
+        "DistanceController",
+        "SpeedController",
+        "KeepRunningUntilFailure",
+        "Repeat",
+        "Inverter",
+        "RecoveryNode",
     }
     control_node_count = sum(1 for t in tags if t in control or t == "SubTree")
     atomic_node_count = sum(1 for t in tags if t not in base and t not in control and t != "SubTree")
@@ -217,3 +223,4 @@ def compute_bt_structure_metrics(xml_path: Path) -> Dict[str, Any]:
         "control_node_count": control_node_count,
         "atomic_node_count": atomic_node_count,
     }
+

@@ -1,4 +1,6 @@
-.venv/*
-**/__pycache__/*
-models/*
+.venv/
+__pycache__/
+models/
 !models/lora_adapter/.gitkeep
+.env
+runs/

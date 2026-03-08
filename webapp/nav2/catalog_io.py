@@ -90,3 +90,4 @@ def summarize_catalog(path: str | Path | None = None) -> CatalogSummary:
         required_ports_by_skill={k: sorted(v) for k, v in required_ports.items()},
         all_ports_by_skill={k: sorted(v) for k, v in all_ports.items()},
     )
+

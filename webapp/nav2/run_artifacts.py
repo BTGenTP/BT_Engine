@@ -44,8 +44,7 @@ class RunPaths:
     mission_txt: Path
     experiment_json: Path
     prompt_rendered_txt: Path
-    llm_steps_raw_txt: Path
-    llm_steps_json: Path
+    llm_xml_raw_txt: Path
     generated_bt_xml: Path
     validation_report_json: Path
     metrics_json: Path
@@ -61,8 +60,7 @@ def create_run_dir(run_id: str) -> RunPaths:
         mission_txt=rd / "mission.txt",
         experiment_json=rd / "experiment.json",
         prompt_rendered_txt=rd / "prompt_rendered.txt",
-        llm_steps_raw_txt=rd / "llm_steps_raw.txt",
-        llm_steps_json=rd / "llm_steps.json",
+        llm_xml_raw_txt=rd / "llm_xml_raw.txt",
         generated_bt_xml=rd / "generated_bt.xml",
         validation_report_json=rd / "validation_report.json",
         metrics_json=rd / "metrics.json",
@@ -79,3 +77,4 @@ def write_json(path: Path, obj: Any) -> None:
 
 def now_iso_z() -> str:
     return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+

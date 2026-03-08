@@ -6,9 +6,13 @@ from typing import Any, Dict, Optional
 from urllib import error, request
 
 
+DEFAULT_REQUEST_TIMEOUT_S = 300  # 5 min pour transfer / execute
+
+
 class RosNav2Client:
-    def __init__(self, api_base: Optional[str] = None) -> None:
+    def __init__(self, api_base: Optional[str] = None, timeout_s: Optional[float] = None) -> None:
         self.api_base = (api_base or os.getenv("ROS2_CONTROL_API_BASE", "http://localhost:8001")).rstrip("/")
+        self.timeout_s = float(timeout_s or os.getenv("ROS2_CONTROL_TIMEOUT_S", DEFAULT_REQUEST_TIMEOUT_S))
 
     def _request(self, method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         body = None
@@ -17,7 +21,7 @@ class RosNav2Client:
             body = json.dumps(payload).encode("utf-8")
         req = request.Request(f"{self.api_base}{path}", data=body, headers=headers, method=method.upper())
         try:
-            with request.urlopen(req, timeout=30) as resp:
+            with request.urlopen(req, timeout=self.timeout_s) as resp:
                 raw = resp.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except error.HTTPError as exc:
@@ -62,3 +66,4 @@ class RosNav2Client:
             "restart_navigation": restart_navigation,
         }
         return self._request("POST", "/api/bt/execute", payload)
+

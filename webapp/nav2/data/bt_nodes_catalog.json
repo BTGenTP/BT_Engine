@@ -90,7 +90,7 @@
       ]
     },
     {
-      "id": "NavigateToGoalWithReplanningAndRecovery",
+      "id": "NavigateToPoseWithReplanningAndRecovery",
       "bt_tag": "SubTree",
       "node_type": "Action",
       "input_ports": {
@@ -120,3 +120,4 @@
     { "bt_tag": "RecoveryNode", "attributes": ["number_of_retries", "name"] }
   ]
 }
+

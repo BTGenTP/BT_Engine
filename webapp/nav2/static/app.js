@@ -1,11 +1,28 @@
-const MAX_TIME_S = 240;
+const MAX_TIME_S = 300;  // 5 min
+const ROS2_REQUEST_TIMEOUT_MS = 300 * 1000;  // 5 min pour transfer / execute
 let progressInterval = null;
 let progressStart = 0;
 let lastXml = "";
 
+function toggleOpenAIOptions() {
+    const openaiOptions = document.getElementById("openai-options");
+    const openaiRadio = document.getElementById("mode-openai");
+    if (openaiOptions && openaiRadio) {
+        if (openaiRadio.checked && !openaiRadio.disabled) {
+            openaiOptions.classList.remove("hidden");
+        } else {
+            openaiOptions.classList.add("hidden");
+        }
+    }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     checkStatus();
     loadExamples();
+    toggleOpenAIOptions();
+    document.querySelectorAll('input[name="gen-mode"]').forEach((radio) => {
+        radio.addEventListener("change", toggleOpenAIOptions);
+    });
 });
 
 async function checkStatus() {
@@ -14,9 +31,35 @@ async function checkStatus() {
     try {
         const res = await fetch("/api/status");
         const data = await res.json();
+
+        // Mode selector: enable/disable from data.modes
+        const modes = data.modes || [];
+        let firstAvailableId = null;
+        modes.forEach((m) => {
+            const radio = document.getElementById("mode-" + m.id);
+            const reasonEl = document.getElementById("mode-reason-" + m.id);
+            const label = radio ? radio.closest(".mode-option") : null;
+            if (radio) {
+                radio.disabled = !m.available;
+                if (m.available && !firstAvailableId) firstAvailableId = m.id;
+            }
+            if (reasonEl) {
+                reasonEl.textContent = m.reason || "";
+                reasonEl.title = m.reason || "";
+            }
+            if (label) {
+                if (m.available) label.classList.remove("unavailable"); else label.classList.add("unavailable");
+            }
+        });
+        if (firstAvailableId) {
+            const firstRadio = document.getElementById("mode-" + firstAvailableId);
+            if (firstRadio && !firstRadio.checked) firstRadio.checked = true;
+        }
+        toggleOpenAIOptions();
+
         if (data.loaded) {
             const provider = data.provider ? `${data.provider}` : "backend";
-            badge.textContent = `Modele Nav2 pret (${data.model_key}, ${provider})`;
+            badge.textContent = `Modele Nav2 pret (${data.model_key || "—"}, ${provider})`;
             badge.className = "status-badge ready";
             btn.disabled = false;
         } else if (data.configured) {
@@ -24,9 +67,10 @@ async function checkStatus() {
             badge.className = "status-badge loading";
             btn.disabled = false;
         } else {
-            badge.textContent = "Adapter Nav2 absent";
-            badge.className = "status-badge error";
-            btn.disabled = true;
+            const hasAnyMode = modes.some((m) => m.available);
+            badge.textContent = hasAnyMode ? "Au moins un mode disponible" : "Aucun mode disponible (config ou deps)";
+            badge.className = hasAnyMode ? "status-badge loading" : "status-badge error";
+            btn.disabled = !hasAnyMode;
         }
     } catch {
         badge.textContent = "Serveur injoignable";
@@ -66,13 +110,13 @@ function startProgress() {
         bar.style.width = pct + "%";
         const elMin = Math.floor(elapsed / 60);
         const elSec = Math.floor(elapsed % 60);
-        timer.textContent = `${elMin}:${String(elSec).padStart(2, "0")} / 4:00`;
+        timer.textContent = `${elMin}:${String(elSec).padStart(2, "0")} / 5:00`;
         if (pct > 50) {
             text.textContent = "Inference en cours...";
         }
         if (elapsed >= MAX_TIME_S) {
             clearInterval(progressInterval);
-            text.textContent = "Timeout depasse (4 min)";
+            text.textContent = "Timeout depasse (5 min)";
         }
     }, 1000);
 }
@@ -99,16 +143,30 @@ async function generate() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), MAX_TIME_S * 1000);
     try {
+        const selectedMode = document.querySelector('input[name="gen-mode"]:checked');
+        const mode = selectedMode && !selectedMode.disabled ? selectedMode.value : null;
+
+        const body = {
+            mission,
+            mode: mode || undefined,
+            constrained: document.getElementById("use-constraint").checked ? "regex" : "off",
+            max_new_tokens: parseInt(document.getElementById("max-new-tokens").value, 10) || 1024,
+            temperature: parseFloat(document.getElementById("temperature").value || "0"),
+            write_run: document.getElementById("write-run").checked,
+        };
+        if (mode === "openai") {
+            const openaiModel = document.getElementById("openai-model")?.value?.trim();
+            const openaiBaseUrl = document.getElementById("openai-base-url")?.value?.trim();
+            const openaiApiKey = document.getElementById("openai-api-key")?.value?.trim();
+            if (openaiModel) body.openai_model = openaiModel;
+            if (openaiBaseUrl) body.openai_base_url = openaiBaseUrl;
+            if (openaiApiKey) body.openai_api_key = openaiApiKey;
+        }
+
         const res = await fetch("/api/generate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                mission,
-                constrained: document.getElementById("use-constraint").checked ? "jsonschema" : "off",
-                max_new_tokens: parseInt(document.getElementById("max-new-tokens").value, 10) || 256,
-                temperature: parseFloat(document.getElementById("temperature").value || "0"),
-                write_run: document.getElementById("write-run").checked,
-            }),
+            body: JSON.stringify(body),
             signal: controller.signal,
         });
         clearTimeout(timeoutId);
@@ -137,7 +195,7 @@ async function validateOnly() {
         body: JSON.stringify({ xml }),
     });
     const data = await res.json();
-    displayResult({ ...data, generation_time_s: null });
+    displayResult({ ...data, generation_time_s: null, run_dir: null });
 }
 
 function displayResult(data) {
@@ -153,22 +211,6 @@ function displayResult(data) {
     } else {
         runDir.classList.add("hidden");
         runDir.textContent = "";
-    }
-
-    const stepsPanel = document.getElementById("steps-panel");
-    if (data.steps_json) {
-        stepsPanel.classList.remove("hidden");
-        document.getElementById("steps-output").textContent = formatJsonBlock(data.steps_json);
-    } else {
-        stepsPanel.classList.add("hidden");
-    }
-
-    const rawStepsPanel = document.getElementById("raw-steps-panel");
-    if (data.raw_steps) {
-        rawStepsPanel.classList.remove("hidden");
-        document.getElementById("raw-steps-output").textContent = data.raw_steps;
-    } else {
-        rawStepsPanel.classList.add("hidden");
     }
 
     const score = data.score != null ? data.score : (data.valid ? 1.0 : 0.0);
@@ -191,11 +233,22 @@ function currentXmlForRos2() {
 }
 
 function showRos2Output(obj) {
-    const pre = document.getElementById("ros2-output-pre");
+    const wrapper = document.getElementById("ros2-output-wrapper");
     const out = document.getElementById("ros2-output");
-    if (!pre || !out) return;
-    pre.classList.remove("hidden");
+    if (!wrapper || !out) return;
+    wrapper.classList.remove("hidden");
     out.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+}
+
+function updateRos2RequestLog(method, path, statusText, isOk) {
+    const lineEl = document.getElementById("ros2-request-line");
+    const statusEl = document.getElementById("ros2-request-status");
+    if (lineEl) lineEl.textContent = `${method} ${path} HTTP/1.1`;
+    if (statusEl) {
+        statusEl.textContent = statusText || "—";
+        statusEl.classList.toggle("ok", isOk);
+        statusEl.classList.toggle("err", !isOk);
+    }
 }
 
 function getRos2Form() {
@@ -217,18 +270,31 @@ async function transferToRos2() {
         return;
     }
     const form = getRos2Form();
-    const res = await fetch("/api/transfer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ xml, filename: form.filename }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
+    updateRos2RequestLog("POST", "/api/transfer", "Envoi...", true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), ROS2_REQUEST_TIMEOUT_MS);
+    try {
+        const res = await fetch("/api/transfer", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ xml, filename: form.filename }),
+            signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        const statusText = res.status + " " + (res.statusText || "");
+        updateRos2RequestLog("POST", "/api/transfer", statusText, res.ok);
+        const data = await res.json();
+        if (!res.ok) {
+            showRos2Output(data);
+            alert(data.error || "Erreur transfert ROS2");
+            return;
+        }
         showRos2Output(data);
-        alert(data.error || "Erreur transfert ROS2");
-        return;
+    } catch (e) {
+        clearTimeout(timeoutId);
+        updateRos2RequestLog("POST", "/api/transfer", e.name === "AbortError" ? "timed out" : e.message, false);
+        showRos2Output({ error: e.name === "AbortError" ? "Requête expirée (5 min)." : String(e.message) });
     }
-    showRos2Output(data);
 }
 
 async function executeOnRos2() {
@@ -246,58 +312,70 @@ async function executeOnRos2() {
         alert(msg);
         return;
     }
-    const res = await fetch("/api/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            xml: xml || null,
-            filename: form.filename,
-            goal_name: form.goal_name,
-            goal_pose: form.goal_pose,
-            initial_pose: form.initial_pose,
-            allow_invalid: form.allow_invalid,
-            start_stack_if_needed: form.start_stack_if_needed,
-            restart_navigation: form.restart_navigation,
-        }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-        showRos2Output(data);
-        alert(data.error || "Erreur execution ROS2");
-        return;
-    }
-    showRos2Output(data);
-}
-
-function renderList(id, items, cssClass) {
-    const node = document.getElementById(id);
-    if (!items.length) {
-        node.classList.add("hidden");
-        node.innerHTML = "";
-        return;
-    }
-    node.classList.remove("hidden");
-    node.innerHTML = items.map((item) => `<div class="${cssClass}">${escapeHtml(item)}</div>`).join("");
-}
-
-function formatJsonBlock(value) {
+    updateRos2RequestLog("POST", "/api/execute", "Envoi...", true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), ROS2_REQUEST_TIMEOUT_MS);
     try {
-        return JSON.stringify(JSON.parse(value), null, 2);
-    } catch {
-        return value;
+        const res = await fetch("/api/execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                xml: xml || null,
+                filename: form.filename,
+                goal_name: form.goal_name,
+                goal_pose: form.goal_pose,
+                initial_pose: form.initial_pose,
+                allow_invalid: form.allow_invalid,
+                start_stack_if_needed: form.start_stack_if_needed,
+                restart_navigation: form.restart_navigation,
+            }),
+            signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        const statusText = res.status + " " + (res.statusText || "");
+        updateRos2RequestLog("POST", "/api/execute", statusText, res.ok);
+        const data = await res.json();
+        showRos2Output(data);
+    } catch (e) {
+        clearTimeout(timeoutId);
+        updateRos2RequestLog("POST", "/api/execute", e.name === "AbortError" ? "timed out" : e.message, false);
+        showRos2Output({ error: e.name === "AbortError" ? "Requête expirée (5 min)." : String(e.message) });
     }
+}
+
+function renderList(id, items, className) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = "";
+    if (!items || items.length === 0) {
+        el.classList.add("hidden");
+        return;
+    }
+    el.classList.remove("hidden");
+    items.forEach((t) => {
+        const div = document.createElement("div");
+        div.className = className;
+        div.textContent = t;
+        el.appendChild(div);
+    });
+}
+
+function escapeHtml(str) {
+    return (str || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
 }
 
 function highlightXml(xml) {
-    let s = escapeHtml(xml);
-    s = s.replace(/&lt;(\/?)([\w]+)/g, '&lt;$1<span class="tag">$2</span>');
-    s = s.replace(/([\w-]+)=&quot;([^&]*)&quot;/g, '<span class="attr">$1</span>=&quot;<span class="val">$2</span>&quot;');
-    s = s.replace(/\/&gt;/g, '<span class="tag">/</span>&gt;');
-    return s;
+    const s = escapeHtml(xml);
+    return s.replace(/(&lt;\/?)([A-Za-z0-9_:-]+)([^&]*?)(\/?&gt;)/g, (_m, p1, tag, rest, p4) => {
+        const attrs = rest.replace(/([A-Za-z0-9_:-]+)=(&quot;[^&]*?&quot;)/g, (_m2, a, v) => ` <span class="attr">${a}</span>=<span class="val">${v}</span>`);
+        return `${p1}<span class="tag">${tag}</span>${attrs}${p4}`;
+    });
 }
 
-function escapeHtml(text) {
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
+function formatJsonBlock(text) {
+    try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
 }
+
