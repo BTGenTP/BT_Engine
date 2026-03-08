@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nav2 — BT Generator (XML direct)</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <h1>Nav2 — Behavior Tree Generator</h1>
+        <p class="subtitle">Mission en langage naturel &rarr; BehaviorTree XML (direct)</p>
+        <div id="model-status" class="status-badge loading">Chargement du backend...</div>
+    </header>
+
+    <main>
+        <section class="input-panel">
+            <h2>Mode de génération</h2>
+            <div id="mode-selector" class="mode-selector">
+                <label class="mode-option">
+                    <input type="radio" name="gen-mode" value="lora" id="mode-lora">
+                    <span class="mode-label">Local (base+adapter)</span>
+                    <span class="mode-reason" id="mode-reason-lora"></span>
+                </label>
+                <label class="mode-option">
+                    <input type="radio" name="gen-mode" value="gguf" id="mode-gguf">
+                    <span class="mode-label">Local (GGUF)</span>
+                    <span class="mode-reason" id="mode-reason-gguf"></span>
+                </label>
+                <label class="mode-option">
+                    <input type="radio" name="gen-mode" value="remote" id="mode-remote">
+                    <span class="mode-label">Remote (Hugging Face)</span>
+                    <span class="mode-reason" id="mode-reason-remote"></span>
+                </label>
+                <label class="mode-option">
+                    <input type="radio" name="gen-mode" value="openai" id="mode-openai">
+                    <span class="mode-label">Remote (OpenAI-compatible)</span>
+                    <span class="mode-reason" id="mode-reason-openai"></span>
+                </label>
+            </div>
+
+            <div id="openai-options" class="openai-options hidden">
+                <h3>OpenAI-compatible (Mistral / OpenAI)</h3>
+                <label>
+                    Modèle
+                    <input type="text" id="openai-model" placeholder="mistral-large-latest">
+                </label>
+                <label>
+                    URL de base
+                    <input type="text" id="openai-base-url" placeholder="https://api.mistral.ai/v1">
+                </label>
+                <label>
+                    Clé API
+                    <input type="password" id="openai-api-key" placeholder="Optionnel si définie en env">
+                </label>
+            </div>
+
+            <h2>Mission</h2>
+            <textarea id="mission" rows="4" placeholder="Ex: Navigue vers le goal (Nav2), puis attends 2.0 s."></textarea>
+
+            <div class="controls">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="use-constraint" checked>
+                    Decodage contraint XML (regex)
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="write-run" checked>
+                    Ecrire un run reproductible
+                </label>
+                <button id="btn-generate" onclick="generate()" disabled>Generer</button>
+            </div>
+
+            <div class="nav2-options">
+                <label>
+                    Max new tokens
+                    <input type="number" id="max-new-tokens" value="1024" min="128" max="2048">
+                </label>
+                <label>
+                    Temperature
+                    <input type="number" id="temperature" value="0.0" step="0.1" min="0" max="1.5">
+                </label>
+            </div>
+
+            <div class="examples">
+                <h3>Exemples de missions</h3>
+                <div id="example-list"></div>
+            </div>
+
+            <div class="validate-section">
+                <h3>Valider un XML existant</h3>
+                <textarea id="xml-input" rows="6" placeholder="Collez votre XML BehaviorTree ici..."></textarea>
+                <button onclick="validateOnly()">Valider</button>
+            </div>
+        </section>
+
+        <section class="output-panel">
+            <div id="loading" class="hidden">
+                <div class="progress-container">
+                    <div class="progress-bar" id="progress-bar"></div>
+                </div>
+                <div class="progress-info">
+                    <span id="progress-text">Demarrage...</span>
+                    <span id="progress-timer">0:00 / 4:00</span>
+                </div>
+            </div>
+
+            <div id="result" class="hidden">
+                <div id="run-dir" class="run-dir hidden"></div>
+
+                <h2>Behavior Tree XML</h2>
+                <div class="gen-time" id="gen-time"></div>
+                <div class="xml-output-wrapper">
+                    <pre><code id="xml-output"></code></pre>
+                </div>
+
+                <div class="validation-panel" id="validation-panel">
+                    <h3>Validation</h3>
+                    <div class="score-section">
+                        <div class="score-bar-container">
+                            <div class="score-bar" id="score-bar"></div>
+                        </div>
+                        <span class="score-value" id="score-value"></span>
+                        <span class="status-badge" id="valid-badge"></span>
+                    </div>
+                    <div id="warnings-list" class="hidden"></div>
+                    <div id="errors-list" class="hidden"></div>
+                </div>
+
+                <div class="validation-panel" id="ros2-panel">
+                    <h3>ROS2_Container</h3>
+                    <div class="nav2-options">
+                        <label>
+                            Filename (BT)
+                            <input type="text" id="ros2-filename" value="mission.xml" placeholder="mission.xml">
+                        </label>
+                        <label>
+                            Initial pose (x,y,theta)
+                            <input type="text" id="ros2-initial-pose" value="0.0,0.0,0.0" placeholder="0.0,0.0,0.0">
+                        </label>
+                    </div>
+
+                    <div class="nav2-options">
+                        <label>
+                            Goal name
+                            <input type="text" id="ros2-goal-name" placeholder="Station_A">
+                        </label>
+                        <label>
+                            Goal pose (x,y,theta)
+                            <input type="text" id="ros2-goal-pose" placeholder="1.2,0.4,0.0">
+                        </label>
+                    </div>
+
+                    <div class="controls">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="ros2-start-stack" checked>
+                            Start sim stack if needed
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="ros2-restart-nav" checked>
+                            Restart navigation
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="ros2-allow-invalid">
+                            Allow invalid (basic check only)
+                        </label>
+                        <button onclick="transferToRos2()">Transferer XML</button>
+                        <button onclick="executeOnRos2()">Executer</button>
+                    </div>
+
+                    <div class="request-log-panel" id="ros2-request-log">
+                        <h4>Requête / État</h4>
+                        <div class="request-log-line" id="ros2-request-line">—</div>
+                        <div class="request-log-status" id="ros2-request-status">—</div>
+                    </div>
+
+                    <div class="xml-output-wrapper hidden" id="ros2-output-wrapper">
+                        <pre id="ros2-output-pre"><code id="ros2-output"></code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+

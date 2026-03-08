@@ -1,0 +1,35 @@
+[project]
+name = "nav2-xml-webapp"
+version = "0.1.0"
+description = "Nav2 BT Generator (XML direct) — mission to BehaviorTree XML"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.104",
+    "uvicorn[standard]>=0.24",
+    "jinja2>=3.1",
+    "huggingface_hub>=0.26",
+]
+
+[project.optional-dependencies]
+# Mode Local (base+adapter): LoRA + HF
+lora = [
+    "torch>=2.3",
+    "transformers>=4.44",
+    "peft>=0.12",
+    "bitsandbytes>=0.43.3",
+    "lm-format-enforcer>=0.11.3",
+]
+# Mode Local GGUF
+gguf = [
+    "llama-cpp-python>=0.2.0",
+]
+# Mode Remote (Hugging Face API): dépendances dans main (huggingface_hub)
+remote = []
+# Mode Remote (OpenAI-compatible, e.g. Mistral)
+openai = [
+    "openai>=1.0",
+]
+
+[tool.uv]
+dev-dependencies = []
