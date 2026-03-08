@@ -29,6 +29,8 @@ main { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; max-width: 14
 @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
 
 .input-panel, .output-panel { background: var(--surface); border-radius: 0.75rem; padding: 1.5rem; border: 1px solid var(--border); }
+.output-panel { min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+.output-panel #result { min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
 h2 { font-size: 1.1rem; margin-bottom: 0.75rem; }
 h3 { font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--text-muted); }
 
@@ -73,7 +75,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--primary), #818cf8); transition: width 1s linear; }
 .progress-info { display: flex; justify-content: space-between; margin-top: 0.5rem; font-size: 0.85rem; color: var(--text-muted); }
 
-pre { background: var(--bg); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; overflow: auto; font-size: 0.8rem; line-height: 1.5; max-height: 500px; }
+.xml-output-wrapper { min-height: 0; max-height: 50vh; overflow-y: auto; overflow-x: auto; border: 1px solid var(--border); border-radius: 0.5rem; background: var(--bg); }
+.xml-output-wrapper pre { margin: 0; max-height: none; border: none; border-radius: 0; }
+pre { background: var(--bg); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; overflow: auto; font-size: 0.8rem; line-height: 1.5; max-height: 50vh; min-width: 0; }
+pre code { display: block; min-width: min-content; }
 code .tag { color: var(--tag-color); font-weight: 600; }
 code .attr { color: var(--attr-color); }
 code .val { color: var(--val-color); }

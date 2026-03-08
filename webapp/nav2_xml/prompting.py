@@ -28,15 +28,17 @@ def render_catalog_compact(
         req = sorted(required.get(sid, set()))
         input_ports = skill.get("input_ports") or {}
         output_ports = skill.get("output_ports") or {}
-        ports_list = ", ".join(str(k) for k in input_ports.keys() if isinstance(k, str))
+        input_typed = ", ".join(f"{k}: {v}" if isinstance(v, str) else str(k) for k, v in input_ports.items() if isinstance(k, str))
         req_list = ", ".join(req) if req else "(aucun port requis)"
-        out_list = ", ".join(str(k) for k in output_ports.keys() if isinstance(k, str)) if output_ports else ""
+        output_typed = ""
+        if output_ports and isinstance(output_ports, dict):
+            output_typed = ", ".join(f"{k}: {v}" if isinstance(v, str) else str(k) for k, v in output_ports.items() if isinstance(k, str))
         desc = (skill.get("semantic_description") or "").strip()
         examples = skill.get("examples") or []
         lines.append(f"- id={sid} | bt_tag={bt_tag!r} | node_type={node_type}")
-        lines.append(f"  input_ports=[{ports_list}] requis=[{req_list}]")
-        if out_list:
-            lines.append(f"  output_ports=[{out_list}]")
+        lines.append(f"  input_ports: {input_typed or '—'} | requis=[{req_list}]")
+        if output_typed:
+            lines.append(f"  output_ports: {output_typed}")
         if desc:
             lines.append(f"  description: {desc}")
         if examples:

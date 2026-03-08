@@ -233,10 +233,10 @@ function currentXmlForRos2() {
 }
 
 function showRos2Output(obj) {
-    const pre = document.getElementById("ros2-output-pre");
+    const wrapper = document.getElementById("ros2-output-wrapper");
     const out = document.getElementById("ros2-output");
-    if (!pre || !out) return;
-    pre.classList.remove("hidden");
+    if (!wrapper || !out) return;
+    wrapper.classList.remove("hidden");
     out.textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
 }
 
