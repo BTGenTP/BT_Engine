@@ -1,0 +1,123 @@
+{
+  "version": "1.0",
+  "source": {
+    "nav2_params": "../params/nav2_params.yaml",
+    "behavior_trees_dir": "../behavior_trees",
+    "notes": "Catalogue minimal dérivé des XML existants du projet. Le générateur refuse tout nœud non listé ici."
+  },
+  "atomic_skills": [
+    {
+      "id": "Wait",
+      "bt_tag": "Wait",
+      "node_type": "Action",
+      "input_ports": {
+        "wait_duration": "float (seconds)"
+      },
+      "output_ports": {},
+      "semantic_description": "Attend pendant une durée donnée.",
+      "examples": [
+        { "wait_duration": 2.0 }
+      ]
+    },
+    {
+      "id": "Spin",
+      "bt_tag": "Spin",
+      "node_type": "Action",
+      "input_ports": {
+        "spin_dist": "float (radians)",
+        "is_recovery": "bool (optional)"
+      },
+      "output_ports": {},
+      "semantic_description": "Effectue une rotation sur place d'un angle donné (en radians).",
+      "examples": [
+        { "spin_dist": 1.57 },
+        { "spin_dist": 6.63 }
+      ]
+    },
+    {
+      "id": "BackUp",
+      "bt_tag": "BackUp",
+      "node_type": "Action",
+      "input_ports": {
+        "backup_dist": "float (meters)",
+        "backup_speed": "float (m/s)"
+      },
+      "output_ports": {},
+      "semantic_description": "Recule d'une distance donnée à une vitesse donnée.",
+      "examples": [
+        { "backup_dist": 0.3, "backup_speed": 0.05 }
+      ]
+    },
+    {
+      "id": "DriveOnHeading",
+      "bt_tag": "DriveOnHeading",
+      "node_type": "Action",
+      "input_ports": {
+        "dist_to_travel": "float (meters)",
+        "speed": "float (m/s)",
+        "time_allowance": "float (seconds)"
+      },
+      "output_ports": {},
+      "semantic_description": "Avance en ligne droite dans l'axe courant sur une distance donnée, avec limite de temps.",
+      "examples": [
+        { "dist_to_travel": 2.0, "speed": 0.2, "time_allowance": 12.0 }
+      ]
+    },
+    {
+      "id": "ClearEntireCostmapLocal",
+      "bt_tag": "ClearEntireCostmap",
+      "node_type": "Action",
+      "input_ports": {
+        "service_name": "string"
+      },
+      "output_ports": {},
+      "semantic_description": "Efface entièrement la costmap locale via le service Nav2.",
+      "examples": [
+        { "service_name": "local_costmap/clear_entirely_local_costmap" }
+      ]
+    },
+    {
+      "id": "ClearEntireCostmapGlobal",
+      "bt_tag": "ClearEntireCostmap",
+      "node_type": "Action",
+      "input_ports": {
+        "service_name": "string"
+      },
+      "output_ports": {},
+      "semantic_description": "Efface entièrement la costmap globale via le service Nav2.",
+      "examples": [
+        { "service_name": "global_costmap/clear_entirely_global_costmap" }
+      ]
+    },
+    {
+      "id": "NavigateToGoalWithReplanningAndRecovery",
+      "bt_tag": "SubTree",
+      "node_type": "Action",
+      "input_ports": {
+        "ID": "string (must be NavigateToPoseWithReplanningAndRecovery)",
+        "__shared_blackboard": "bool"
+      },
+      "output_ports": {},
+      "semantic_description": "Exécute une navigation Nav2 standard (replanning + recovery). Le goal doit être fourni par l'appelant Nav2 (ex: RViz Nav2 Goal).",
+      "examples": [
+        { "ID": "NavigateToPoseWithReplanningAndRecovery", "__shared_blackboard": true }
+      ]
+    }
+  ],
+  "control_nodes_allowed": [
+    { "bt_tag": "Sequence", "attributes": ["name"] },
+    { "bt_tag": "Fallback", "attributes": [] },
+    { "bt_tag": "ReactiveSequence", "attributes": [] },
+    { "bt_tag": "ReactiveFallback", "attributes": ["name"] },
+    { "bt_tag": "RoundRobin", "attributes": ["name"] },
+    { "bt_tag": "PipelineSequence", "attributes": ["name"] },
+    { "bt_tag": "RateController", "attributes": ["hz"] },
+    { "bt_tag": "DistanceController", "attributes": ["distance"] },
+    { "bt_tag": "SpeedController", "attributes": ["max_speed"] },
+    { "bt_tag": "KeepRunningUntilFailure", "attributes": [] },
+    { "bt_tag": "Repeat", "attributes": ["num_cycles"] },
+    { "bt_tag": "Inverter", "attributes": [] },
+    { "bt_tag": "RecoveryNode", "attributes": ["number_of_retries", "name"] }
+  ]
+}
+
