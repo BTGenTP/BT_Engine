@@ -25,6 +25,7 @@ from bt_validation import validate_bt_xml
 from inference import (
     DEFAULT_OPENAI_BASE_URL,
     DEFAULT_OPENAI_MODEL,
+    DEFAULT_OPENAI_TIMEOUT_S,
     TEST_MISSIONS_NAV2_XML,
     Nav2XmlOpenAICompatibleGenerator,
     build_nav2_xml_generator_from_env,
@@ -148,7 +149,7 @@ async def generate(req: GenerateRequest):
             base_url=base_url,
             api_key=api_key,
             model_key=os.getenv("NAV2_MODEL_KEY", "mistral7b"),
-            timeout_s=float(os.getenv("NAV2_XML_OPENAI_TIMEOUT_S", "120")),
+            timeout_s=float(os.getenv("NAV2_XML_OPENAI_TIMEOUT_S", str(DEFAULT_OPENAI_TIMEOUT_S))),
             max_retries=int(os.getenv("NAV2_XML_OPENAI_MAX_RETRIES", "2")),
         )
     else:

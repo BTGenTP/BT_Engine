@@ -1,4 +1,4 @@
-const MAX_TIME_S = 300;  // 5 min
+const MAX_TIME_S = 3000;  // 50 min pour l'inférence LLM
 const ROS2_REQUEST_TIMEOUT_MS = 300 * 1000;  // 5 min pour transfer / execute
 let progressInterval = null;
 let progressStart = 0;
@@ -110,13 +110,16 @@ function startProgress() {
         bar.style.width = pct + "%";
         const elMin = Math.floor(elapsed / 60);
         const elSec = Math.floor(elapsed % 60);
-        timer.textContent = `${elMin}:${String(elSec).padStart(2, "0")} / 5:00`;
+        const totalMin = Math.floor(MAX_TIME_S / 60);
+        const totalSec = MAX_TIME_S % 60;
+        const totalStr = `${totalMin}:${String(totalSec).padStart(2, "0")}`;
+        timer.textContent = `${elMin}:${String(elSec).padStart(2, "0")} / ${totalStr}`;
         if (pct > 50) {
             text.textContent = "Inference en cours...";
         }
         if (elapsed >= MAX_TIME_S) {
             clearInterval(progressInterval);
-            text.textContent = "Timeout depasse (5 min)";
+            text.textContent = "Timeout depasse";
         }
     }, 1000);
 }

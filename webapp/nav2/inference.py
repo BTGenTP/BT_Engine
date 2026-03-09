@@ -16,6 +16,9 @@ DEFAULT_ADAPTER_DIR = Path(__file__).resolve().parent / "models" / "lora_adapter
 DEFAULT_HF_CACHE_DIR = Path(os.getenv("HF_HOME", Path.home() / ".cache" / "huggingface")) / "hub"
 DEFAULT_OPENAI_MODEL = "mistral-large-latest"
 DEFAULT_OPENAI_BASE_URL = "https://api.mistral.ai/v1"
+DEFAULT_REMOTE_MODEL_ID = "mlatoundji/Mistral-7B-Instruct-v0.2-Nav2BT-XML-merged"
+DEFAULT_REMOTE_TIMEOUT_S = 3000.0
+DEFAULT_OPENAI_TIMEOUT_S = 3000.0
 
 TEST_MISSIONS_NAV2_XML = [
     "Navigue vers le goal (Nav2), puis attends 2.0 s.",
@@ -392,7 +395,7 @@ class Nav2XmlRemoteGenerator:
         model_id: str,
         token: str,
         model_key: str = "mistral7b",
-        timeout_s: float = 120.0,
+        timeout_s: float = DEFAULT_REMOTE_TIMEOUT_S,
         max_retries: int = 2,
     ) -> None:
         self.model_id = (model_id or "").strip()
@@ -441,7 +444,13 @@ class Nav2XmlRemoteGenerator:
         }
         if do_sample:
             kwargs["temperature"] = float(temperature)
-        return str(client.text_generation(prompt, **kwargs)).strip()
+        try:
+            return str(client.text_generation(prompt, **kwargs)).strip()
+        except StopIteration:
+            raise RuntimeError(
+                "Model has no inference provider mapping on the Hub (serverless router). "
+                "Deploy an Inference Endpoint and set HF_INFERENCE_ENDPOINT, or use a model listed on the router."
+            ) from None
 
     def generate(
         self,
@@ -519,7 +528,7 @@ class Nav2XmlOpenAICompatibleGenerator:
         base_url: str,
         api_key: str,
         model_key: str = "mistral7b",
-        timeout_s: float = 120.0,
+        timeout_s: float = DEFAULT_OPENAI_TIMEOUT_S,
         max_retries: int = 2,
     ) -> None:
         self.model = (model or DEFAULT_OPENAI_MODEL).strip()
@@ -761,7 +770,7 @@ def get_generator_for_mode(mode: str):
             base_url=os.getenv("NAV2_XML_OPENAI_BASE_URL", "").strip() or DEFAULT_OPENAI_BASE_URL,
             api_key=api_key,
             model_key=model_key,
-            timeout_s=float(os.getenv("NAV2_XML_OPENAI_TIMEOUT_S", "120")),
+            timeout_s=float(os.getenv("NAV2_XML_OPENAI_TIMEOUT_S", str(DEFAULT_OPENAI_TIMEOUT_S))),
             max_retries=int(os.getenv("NAV2_XML_OPENAI_MAX_RETRIES", "2")),
         )
 
@@ -772,14 +781,14 @@ def get_generator_for_mode(mode: str):
         return None
 
     if mode == "remote":
-        remote_id = os.getenv("NAV2_XML_REMOTE_MODEL_ID", "").strip()
+        remote_id = os.getenv("HF_INFERENCE_ENDPOINT", "https://xdxj73b4sj2u0ojn.us-east-1.aws.endpoints.huggingface.cloud").strip() or os.getenv("NAV2_XML_REMOTE_MODEL_ID", "").strip() or DEFAULT_REMOTE_MODEL_ID
         token = os.getenv("NAV2_XML_HF_TOKEN", "").strip() or os.getenv("HF_TOKEN", "").strip()
         if remote_id and token:
             return Nav2XmlRemoteGenerator(
                 model_id=remote_id,
                 token=token,
                 model_key=model_key,
-                timeout_s=float(os.getenv("NAV2_XML_REMOTE_TIMEOUT_S", "120")),
+                timeout_s=float(os.getenv("NAV2_XML_REMOTE_TIMEOUT_S", str(DEFAULT_REMOTE_TIMEOUT_S))),
                 max_retries=int(os.getenv("NAV2_XML_REMOTE_MAX_RETRIES", "2")),
             )
         return None
